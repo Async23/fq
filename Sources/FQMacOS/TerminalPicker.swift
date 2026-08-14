@@ -7,7 +7,8 @@ protocol ApplicationPicking: AnyObject {
   func choose(
     from applications: [ApplicationCandidate],
     initialQuery: String,
-    action: ApplicationExitAction
+    action: ApplicationExitAction,
+    refreshApplications: () -> [ApplicationCandidate]
   ) throws -> ApplicationExitSelection?
 }
 
@@ -33,21 +34,25 @@ final class TerminalPicker: ApplicationPicking {
   private let inputFileDescriptor: Int32
   private let outputFileDescriptor: Int32
   private let colorEnabled: Bool
+  private let refreshInterval: TimeInterval
 
   init(
     inputFileDescriptor: Int32 = STDIN_FILENO,
     outputFileDescriptor: Int32 = STDOUT_FILENO,
-    environment: [String: String] = ProcessInfo.processInfo.environment
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    refreshInterval: TimeInterval = 0.75
   ) {
     self.inputFileDescriptor = inputFileDescriptor
     self.outputFileDescriptor = outputFileDescriptor
     colorEnabled = environment["NO_COLOR"] == nil && environment["TERM"] != "dumb"
+    self.refreshInterval = refreshInterval
   }
 
   func choose(
     from applications: [ApplicationCandidate],
     initialQuery: String,
-    action: ApplicationExitAction
+    action: ApplicationExitAction,
+    refreshApplications: () -> [ApplicationCandidate]
   ) throws -> ApplicationExitSelection? {
     guard isatty(inputFileDescriptor) == 1, isatty(outputFileDescriptor) == 1 else {
       throw TerminalPickerError.notATerminal
@@ -78,14 +83,29 @@ final class TerminalPicker: ApplicationPicking {
       defaultAction: action
     )
     var dimensions = terminalDimensions()
+    var nextRefresh = ProcessInfo.processInfo.systemUptime + refreshInterval
     render(session: session, dimensions: dimensions, clearScreen: true)
 
     while true {
       guard let event = try readEvent() else {
+        var redraw = false
+        var clearScreen = false
         let nextDimensions = terminalDimensions()
         if nextDimensions != dimensions {
           dimensions = nextDimensions
-          render(session: session, dimensions: dimensions, clearScreen: true)
+          redraw = true
+          clearScreen = true
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if now >= nextRefresh {
+          _ = RunLoop.current.run(mode: .default, before: Date())
+          redraw = session.replaceApplications(refreshApplications()) || redraw
+          nextRefresh = now + refreshInterval
+        }
+
+        if redraw {
+          render(session: session, dimensions: dimensions, clearScreen: clearScreen)
         }
         continue
       }

@@ -156,37 +156,49 @@ enum TerminalPickerRenderer {
     colorEnabled: Bool
   ) -> [String] {
     guard height >= 6, width >= 20 else {
-      let name = session.state.selectedApplication.map { TerminalText.sanitize($0.name) } ?? "-"
+      let name =
+        session.confirmationSelection.map {
+          TerminalText.sanitize($0.application.name)
+        } ?? "-"
+      let action = session.isConfirmationTargetAvailable ? "y 确认 · esc 返回" : "目标已退出 · esc 返回"
       return compactOverlayLines(
-        ["确认强制退出", name, "y 确认 · esc 返回"],
+        ["确认强制退出", name, action],
         height: height,
         width: width,
         colorEnabled: colorEnabled
       )
     }
 
-    let application = session.state.selectedApplication
+    let application = session.confirmationSelection?.application
+    let isAvailable = session.isConfirmationTargetAvailable
     let name = TerminalText.sanitize(application?.name ?? "Unknown application")
     let identity =
       application.map { "PID \($0.processIdentifier) · \($0.bundleIdentifier ?? "无 Bundle ID")" }
       ?? "应用已不可用"
-    let warning =
-      application?.isFinder == true
-      ? "Finder 会被强制退出，并由 macOS 自动重新打开。"
-      : "此应用中未保存的内容可能会丢失。"
+    let warning: String
+    if !isAvailable {
+      warning = "目标应用已经退出或不再可用；fq 不会发送退出请求。"
+    } else if application?.isFinder == true {
+      warning = "Finder 会被强制退出，并由 macOS 自动重新打开。"
+    } else {
+      warning = "此应用中未保存的内容可能会丢失。"
+    }
     let content = [
       ("强制退出", ContentStyle.warning),
       (name, ContentStyle.accent),
       (identity, ContentStyle.normal),
       ("", ContentStyle.normal),
       (warning, ContentStyle.warning),
-      ("按 y 确认；Enter 不会确认破坏性操作。", ContentStyle.normal),
+      (
+        isAvailable ? "按 y 确认；Enter 不会确认破坏性操作。" : "按 Esc 返回实时应用列表。",
+        ContentStyle.normal
+      ),
     ]
 
     return overlayFrame(
       title: "确认",
       content: content,
-      footer: "y 确认 │ n/esc 返回 │ ctrl-c 取消",
+      footer: isAvailable ? "y 确认 │ n/esc 返回 │ ctrl-c 取消" : "n/esc 返回 │ ctrl-c 取消",
       height: height,
       width: width,
       colorEnabled: colorEnabled
@@ -302,7 +314,9 @@ enum TerminalPickerRenderer {
   private static func topBorder(session: PickerSession, width: Int) -> String {
     let action = session.defaultAction == .forceQuit ? "模式 强退" : "模式 退出"
     let trailing: String
-    if width >= 58 {
+    if width >= 68 {
+      trailing = " f 筛选 │ 实时 │ \(action) ─"
+    } else if width >= 58 {
       trailing = " f 筛选 │ \(action) ─"
     } else if width >= 36 {
       trailing = " \(action) ─"

@@ -24,7 +24,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     let output = render(makeSession(), rows: 24, columns: 100)
 
     XCTAssertTrue(output.contains("┌─ 1 fq"))
-    XCTAssertTrue(output.contains("f 筛选 │ 模式 强退"))
+    XCTAssertTrue(output.contains("f 筛选 │ 实时 │ 模式 强退"))
     XCTAssertTrue(output.contains("PID"))
     XCTAssertTrue(output.contains("应用"))
     XCTAssertTrue(output.contains("BUNDLE ID"))
@@ -90,6 +90,23 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("f 或 /"))
     XCTAssertTrue(output.contains("t  正常退出 · k  强制退出"))
     XCTAssertTrue(output.contains("q 或 Esc"))
+  }
+
+  func testConfirmationDisablesActionWhenRefreshedTargetHasExited() {
+    var session = PickerSession(
+      applications: applications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    _ = session.handle(.enter)
+    _ = session.replaceApplications(Array(applications.dropFirst()))
+
+    let output = render(session, rows: 18, columns: 90)
+
+    XCTAssertTrue(output.contains("目标应用已经退出或不再可用"))
+    XCTAssertTrue(output.contains("fq 不会发送退出请求"))
+    XCTAssertTrue(output.contains("按 Esc 返回实时应用列表"))
+    XCTAssertFalse(output.contains("y 确认 │"))
   }
 
   private func makeSession() -> PickerSession {

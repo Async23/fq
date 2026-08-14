@@ -157,7 +157,8 @@ private final class FakePicker: ApplicationPicking {
   func choose(
     from applications: [ApplicationCandidate],
     initialQuery: String,
-    action: ApplicationExitAction
+    action: ApplicationExitAction,
+    refreshApplications: () -> [ApplicationCandidate]
   ) throws -> ApplicationExitSelection? {
     chooseCallCount += 1
     receivedActions.append(action)

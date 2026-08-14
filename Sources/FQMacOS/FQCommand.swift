@@ -101,7 +101,8 @@ public final class FQCommand {
       selection = try picker.choose(
         from: applications,
         initialQuery: query,
-        action: action
+        action: action,
+        refreshApplications: applicationManager.runningApplications
       )
     } catch {
       console.writeError("fq: \(TerminalText.sanitize(error.localizedDescription))\n")
@@ -176,6 +177,7 @@ public final class FQCommand {
       q / Esc / Ctrl-C        取消
 
     强制退出会在选择器内要求输入 y 确认；Enter 不会确认破坏性操作。
+    应用列表会自动刷新，并按进程身份保留当前选择与确认目标。
     fq 只显示 macOS 认定为普通 GUI 应用的进程，不显示守护进程和大多数菜单栏工具。
     """ + "\n"
 }
