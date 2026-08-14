@@ -127,6 +127,7 @@ enum PickerEvent: Equatable {
   case deleteForward
   case clear
   case redraw
+  case help
   case text(String)
 }
 
@@ -332,6 +333,8 @@ struct PickerSession {
       default:
         statusMessage = "筛选请先按 f 或 /"
       }
+    case .help:
+      phase = .help
     case .interrupt, .suspend, .redraw:
       return .stay(redraw: false)
     }
@@ -350,7 +353,7 @@ struct PickerSession {
     case .move(let offset) where offset == 1:
       phase = .browse
       state.moveSelection(by: offset)
-    case .move, .positionViewport, .cycleFocus, .chooseConfirmation:
+    case .move, .positionViewport, .cycleFocus, .chooseConfirmation, .help:
       return .stay(redraw: false)
     case .moveHorizontal(let offset):
       guard updatedEdit.moveCursor(by: offset, in: state.query) else {
@@ -441,7 +444,7 @@ struct PickerSession {
 
   private mutating func handleHelp(_ event: PickerEvent) -> PickerDecision {
     switch event {
-    case .escape, .text("?"), .text("h"), .text("q"):
+    case .escape, .help, .text("?"), .text("h"), .text("q"):
       phase = .browse
       return .stay(redraw: true)
     default:

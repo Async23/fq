@@ -377,60 +377,102 @@ final class TerminalPicker: ApplicationPicking {
     guard let second = try readByte() else {
       return .escape
     }
+    if second == 79 {
+      guard let final = try readByte() else {
+        return .escape
+      }
+      return TerminalKeySequence.ss3(final: final).map {
+        event(for: $0, session: session, dimensions: dimensions)
+      }
+    }
     guard second == 91 else {
       bufferedByte = second
       return .escape
     }
-    guard let third = try readByte() else {
+    guard let first = try readByte() else {
       return .escape
     }
 
-    switch third {
-    case 60:
+    if first == 60 {
       return try readMouseEvent().flatMap {
         mouseInteraction.event(for: $0, session: session, dimensions: dimensions)
       }
-    case 65:
-      return .move(-1)
-    case 66:
-      return .move(1)
-    case 67:
-      return .moveHorizontal(1)
-    case 68:
-      return .moveHorizontal(-1)
-    case 72:
-      return .first
-    case 70:
-      return .last
-    case 90:
-      return .cycleFocus
-    case 49, 55:
-      guard try readByte() == 126 else {
+    }
+    if first == 91 {
+      guard let legacyFinal = try readByte() else {
         return nil
       }
-      return .first
-    case 52, 56:
-      guard try readByte() == 126 else {
+      return legacyFinal == 65 ? .help : nil
+    }
+    return try readCSIKey(startingWith: first, session: session, dimensions: dimensions)
+  }
+
+  private func readCSIKey(
+    startingWith first: UInt8,
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) throws -> PickerEvent? {
+    var parameters = ""
+    var intermediates = ""
+    var byte = first
+
+    for _ in 0..<32 {
+      switch byte {
+      case 48...63:
+        guard intermediates.isEmpty else {
+          return nil
+        }
+        parameters.append(Character(UnicodeScalar(byte)))
+      case 32...47:
+        intermediates.append(Character(UnicodeScalar(byte)))
+      case 64...126:
+        return TerminalKeySequence.csi(
+          parameters: parameters,
+          intermediates: intermediates,
+          final: byte
+        ).map {
+          event(for: $0, session: session, dimensions: dimensions)
+        }
+      default:
         return nil
       }
-      return .last
-    case 51:
-      guard try readByte() == 126 else {
+
+      guard let next = try readByte() else {
         return nil
       }
-      return .deleteForward
-    case 53:
-      guard try readByte() == 126 else {
-        return nil
-      }
-      return pageEvent(direction: -1, session: session, dimensions: dimensions)
-    case 54:
-      guard try readByte() == 126 else {
-        return nil
-      }
-      return pageEvent(direction: 1, session: session, dimensions: dimensions)
-    default:
-      return nil
+      byte = next
+    }
+    return nil
+  }
+
+  private func event(
+    for key: TerminalSpecialKey,
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) -> PickerEvent {
+    switch key {
+    case .up:
+      .move(-1)
+    case .down:
+      .move(1)
+    case .left:
+      .moveHorizontal(-1)
+    case .right:
+      .moveHorizontal(1)
+    case .home:
+      .first
+    case .end:
+      .last
+    case .pageUp:
+      pageEvent(direction: -1, session: session, dimensions: dimensions)
+    case .pageDown:
+      pageEvent(direction: 1, session: session, dimensions: dimensions)
+    case .deleteForward:
+      .deleteForward
+    case .backTab:
+      .cycleFocus
+    case .help:
+      .help
     }
   }
 

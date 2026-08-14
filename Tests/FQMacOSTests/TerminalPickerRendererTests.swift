@@ -130,7 +130,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("Backspace/Delete  删除"))
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
-    XCTAssertTrue(output.contains("? 或 h  帮助"))
+    XCTAssertTrue(output.contains("F1、? 或 h  帮助"))
     XCTAssertTrue(output.contains("Ctrl-Z  挂起，fg 返回"))
   }
 
@@ -419,8 +419,8 @@ final class TerminalPickerRendererTests: XCTestCase {
       .command(.text("f"))
     )
     XCTAssertEqual(
-      mouseTarget(at: "?/h 帮助", row: 24, session: session, dimensions: dimensions),
-      .command(.text("?"))
+      mouseTarget(at: "F1/?/h 帮助", row: 24, session: session, dimensions: dimensions),
+      .command(.help)
     )
     XCTAssertEqual(
       mouseTarget(at: "q 关闭", row: 24, session: session, dimensions: dimensions),

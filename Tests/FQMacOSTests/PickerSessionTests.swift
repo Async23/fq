@@ -322,7 +322,28 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.handle(.text("?")), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
 
+    XCTAssertEqual(session.handle(.help), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .help)
+    XCTAssertEqual(session.handle(.help), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
+
     XCTAssertEqual(session.handle(.text("q")), .cancel)
+  }
+
+  func testF1DoesNotDisruptFilteringOrConfirmation() {
+    var filteringSession = makeSession(defaultAction: .forceQuit)
+    _ = filteringSession.handle(.text("f"))
+    let filteringPhase = filteringSession.phase
+
+    XCTAssertEqual(filteringSession.handle(.help), .stay(redraw: false))
+    XCTAssertEqual(filteringSession.phase, filteringPhase)
+
+    var confirmingSession = makeSession(defaultAction: .forceQuit)
+    _ = confirmingSession.handle(.enter)
+    let confirmingPhase = confirmingSession.phase
+
+    XCTAssertEqual(confirmingSession.handle(.help), .stay(redraw: false))
+    XCTAssertEqual(confirmingSession.phase, confirmingPhase)
   }
 
   func testSuspendPreservesTheCurrentPickerPhaseAndState() {
