@@ -111,7 +111,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("Finder"))
     XCTAssertTrue(output.contains("由 macOS 自动重新打开"))
     XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
-    XCTAssertTrue(output.contains("←→/tab 选择 │ Enter 执行所选"))
+    XCTAssertTrue(output.contains("←→/tab 选择 │ Enter/点击 执行"))
   }
 
   func testHelpViewDocumentsBtopStyleCommands() {
@@ -121,6 +121,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     let output = render(session, rows: 20, columns: 100)
 
     XCTAssertTrue(output.contains("导航"))
+    XCTAssertTrue(output.contains("鼠标滚轮浏览 · 单击选择 · 再点打开动作"))
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
     XCTAssertTrue(output.contains("u  暂停/继续实时应用列表"))
     XCTAssertTrue(output.contains("f 或 /"))
@@ -128,6 +129,93 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
     XCTAssertTrue(output.contains("q 或 Esc"))
+  }
+
+  func testMouseHitTestingTracksVisibleRowsAfterScrolling() {
+    let manyApplications = (1...20).map { index in
+      rendererCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: manyApplications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    _ = session.handle(.last)
+    let dimensions = TerminalDimensions(rows: 10, columns: 90)
+
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: 10,
+        row: 4
+      ),
+      .application(14)
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: 10,
+        row: 9
+      ),
+      .application(19)
+    )
+    XCTAssertNil(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: 1,
+        row: 4
+      )
+    )
+  }
+
+  func testMouseHitTestingFindsBothConfirmationButtons() {
+    var session = makeSession()
+    _ = session.handle(.enter)
+    let dimensions = TerminalDimensions(rows: 18, columns: 90)
+    var targets: [PickerMouseTarget] = []
+
+    for row in 1...dimensions.rows {
+      for column in 1..<dimensions.columns {
+        if let target = TerminalPickerRenderer.mouseTarget(
+          session: session,
+          dimensions: dimensions,
+          column: column,
+          row: row
+        ) {
+          targets.append(target)
+        }
+      }
+    }
+
+    XCTAssertTrue(targets.contains(.confirmationExecute))
+    XCTAssertTrue(targets.contains(.confirmationCancel))
+  }
+
+  func testMouseHitTestingExposesOnlyReturnWhenConfirmationTargetDisappears() {
+    var session = makeSession()
+    _ = session.handle(.enter)
+    _ = session.replaceApplications([])
+    let dimensions = TerminalDimensions(rows: 18, columns: 90)
+    var targets: [PickerMouseTarget] = []
+
+    for row in 1...dimensions.rows {
+      for column in 1..<dimensions.columns {
+        if let target = TerminalPickerRenderer.mouseTarget(
+          session: session,
+          dimensions: dimensions,
+          column: column,
+          row: row
+        ) {
+          targets.append(target)
+        }
+      }
+    }
+
+    XCTAssertFalse(targets.contains(.confirmationExecute))
+    XCTAssertTrue(targets.contains(.confirmationCancel))
   }
 
   func testNormalQuitShortcutOpensNonDestructiveActionPanel() {

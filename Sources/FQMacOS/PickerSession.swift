@@ -107,6 +107,7 @@ enum PickerEvent: Equatable {
   case move(Int)
   case moveHorizontal(Int)
   case cycleFocus
+  case chooseConfirmation(PickerConfirmationChoice)
   case first
   case last
   case backspace
@@ -242,6 +243,8 @@ struct PickerSession {
       state.cycleSort(by: offset)
     case .cycleFocus:
       return .stay(redraw: false)
+    case .chooseConfirmation:
+      return .stay(redraw: false)
     case .first:
       state.moveToFirst()
     case .last:
@@ -293,7 +296,7 @@ struct PickerSession {
     case .move(let offset) where offset == 1:
       phase = .browse
       state.moveSelection(by: offset)
-    case .move, .cycleFocus:
+    case .move, .cycleFocus, .chooseConfirmation:
       return .stay(redraw: false)
     case .moveHorizontal(let offset):
       guard updatedEdit.moveCursor(by: offset, in: state.query) else {
@@ -360,6 +363,14 @@ struct PickerSession {
       updated.choice = confirmation.choice == .cancel ? .execute : .cancel
       phase = .confirming(updated)
       return .stay(redraw: true)
+    case .chooseConfirmation(.cancel):
+      phase = .browse
+      return .stay(redraw: true)
+    case .chooseConfirmation(.execute):
+      guard isConfirmationTargetAvailable else {
+        return .stay(redraw: false)
+      }
+      return .select(confirmation.selection)
     case .move:
       return .stay(redraw: false)
     case .escape, .text("n"), .text("N"), .text("q"):

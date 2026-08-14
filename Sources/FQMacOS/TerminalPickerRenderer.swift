@@ -6,6 +6,12 @@ struct TerminalDimensions: Equatable {
   let columns: Int
 }
 
+enum PickerMouseTarget: Equatable {
+  case application(Int)
+  case confirmationExecute
+  case confirmationCancel
+}
+
 enum TerminalPickerRenderer {
   static func render(
     session: PickerSession,
@@ -42,6 +48,145 @@ enum TerminalPickerRenderer {
     return home + clear + lines.prefix(height).joined(separator: "\r\n")
   }
 
+  static func mouseTarget(
+    session: PickerSession,
+    dimensions: TerminalDimensions,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    let height = max(1, dimensions.rows)
+    let width = max(1, dimensions.columns - 1)
+    guard (1...width).contains(column), (1...height).contains(row) else {
+      return nil
+    }
+
+    switch session.phase {
+    case .browse:
+      return applicationMouseTarget(
+        session: session,
+        height: height,
+        width: width,
+        column: column,
+        row: row
+      )
+    case .confirming:
+      return confirmationMouseTarget(
+        session: session,
+        height: height,
+        width: width,
+        column: column,
+        row: row
+      )
+    case .filtering, .help:
+      return nil
+    }
+  }
+
+  private static func applicationMouseTarget(
+    session: PickerSession,
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    let visible = session.state.visibleApplications
+    guard !visible.isEmpty, column > 1, column < width else {
+      return nil
+    }
+
+    if height < 6 || width < 20 {
+      return row == 2 ? .application(session.state.selectedIndex) : nil
+    }
+
+    let offset = row - 4
+    let visibleRange = visibleApplicationRange(session: session, height: height)
+    guard offset >= 0 else {
+      return nil
+    }
+    let index = visibleRange.lowerBound + offset
+    guard visibleRange.contains(index) else {
+      return nil
+    }
+    return .application(index)
+  }
+
+  private static func confirmationMouseTarget(
+    session: PickerSession,
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    let contentCount = 6
+    let interiorRows = height - 2
+    guard height >= 8, width >= 20, interiorRows >= contentCount else {
+      return nil
+    }
+
+    let topPadding = max(0, (interiorRows - contentCount) / 2)
+    let buttonRow = 2 + topPadding + contentCount - 1
+    guard row == buttonRow else {
+      return nil
+    }
+
+    let buttons = confirmationButtons(session: session)
+    let innerWidth = width - 2
+    let buttonsWidth = TerminalText.displayWidth(buttons)
+    guard buttonsWidth <= innerWidth else {
+      return nil
+    }
+    let startColumn = 2 + (innerWidth - buttonsWidth) / 2
+
+    if session.isConfirmationTargetAvailable,
+      contains(
+        column: column,
+        label: "[ 执行 ]",
+        in: buttons,
+        startingAt: startColumn
+      )
+    {
+      return .confirmationExecute
+    }
+
+    let cancelLabel = session.isConfirmationTargetAvailable ? "[ 取消 ]" : "[ 返回 ]"
+    if contains(
+      column: column,
+      label: cancelLabel,
+      in: buttons,
+      startingAt: startColumn
+    ) {
+      return .confirmationCancel
+    }
+    return nil
+  }
+
+  private static func contains(
+    column: Int,
+    label: String,
+    in text: String,
+    startingAt startColumn: Int
+  ) -> Bool {
+    guard let range = text.range(of: label) else {
+      return false
+    }
+    let prefix = String(text[..<range.lowerBound])
+    let lowerBound = startColumn + TerminalText.displayWidth(prefix)
+    let upperBound = lowerBound + TerminalText.displayWidth(label) - 1
+    return (lowerBound...upperBound).contains(column)
+  }
+
+  private static func visibleApplicationRange(
+    session: PickerSession,
+    height: Int
+  ) -> Range<Int> {
+    let visible = session.state.visibleApplications
+    let selectedIndex = min(session.state.selectedIndex, max(0, visible.count - 1))
+    let listRows = max(0, height - 4)
+    let startIndex = max(0, selectedIndex - listRows + 1)
+    let endIndex = min(visible.count, startIndex + listRows)
+    return startIndex..<endIndex
+  }
+
   private static func pickerLines(
     session: PickerSession,
     height: Int,
@@ -55,9 +200,7 @@ enum TerminalPickerRenderer {
 
     let visible = session.state.visibleApplications
     let selectedIndex = min(session.state.selectedIndex, max(0, visible.count - 1))
-    let listRows = height - 4
-    let startIndex = max(0, selectedIndex - listRows + 1)
-    let endIndex = min(visible.count, startIndex + listRows)
+    let visibleRange = visibleApplicationRange(session: session, height: height)
 
     var lines = [
       styled(
@@ -90,8 +233,8 @@ enum TerminalPickerRenderer {
           colorEnabled: colorEnabled
         )
       )
-    } else if startIndex < endIndex {
-      for index in startIndex..<endIndex {
+    } else if !visibleRange.isEmpty {
+      for index in visibleRange {
         lines.append(
           framed(
             tableLine(
@@ -192,14 +335,7 @@ enum TerminalPickerRenderer {
     } else {
       warning = "fq 会请求应用正常退出；应用可以拒绝或显示保存提示。"
     }
-    let buttons: String
-    if !isAvailable {
-      buttons = "▸ [ 返回 ] ◂"
-    } else if session.confirmationChoice == .execute {
-      buttons = "▸ [ 执行 ] ◂    [ 取消 ]"
-    } else {
-      buttons = "[ 执行 ]    ▸ [ 取消 ] ◂"
-    }
+    let buttons = confirmationButtons(session: session)
     let warningStyle: ContentStyle = !isAvailable || isForceQuit ? .warning : .normal
     let content = [
       (actionName, isForceQuit ? ContentStyle.warning : ContentStyle.accent),
@@ -214,12 +350,22 @@ enum TerminalPickerRenderer {
       title: "操作确认",
       content: content,
       footer: isAvailable
-        ? "←→/tab 选择 │ Enter 执行所选 │ Esc 返回"
+        ? "←→/tab 选择 │ Enter/点击 执行 │ Esc 返回"
         : "Enter/Esc 返回 │ ctrl-c 取消",
       height: height,
       width: width,
       colorEnabled: colorEnabled
     )
+  }
+
+  private static func confirmationButtons(session: PickerSession) -> String {
+    guard session.isConfirmationTargetAvailable else {
+      return "▸ [ 返回 ] ◂"
+    }
+    if session.confirmationChoice == .execute {
+      return "▸ [ 执行 ] ◂    [ 取消 ]"
+    }
+    return "[ 执行 ]    ▸ [ 取消 ] ◂"
   }
 
   private static func helpLines(
@@ -232,6 +378,7 @@ enum TerminalPickerRenderer {
     let content: [(String, ContentStyle)] = [
       ("导航", .accent),
       ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
+      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 点击按钮确认", .normal),
       ("", .normal),
       ("列表", .accent),
       ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),

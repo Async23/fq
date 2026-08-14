@@ -29,6 +29,51 @@ enum TerminalPickerError: LocalizedError {
   }
 }
 
+enum TerminalMouseAction: Equatable {
+  case leftPress
+  case scrollUp
+  case scrollDown
+}
+
+struct TerminalMouseEvent: Equatable {
+  let action: TerminalMouseAction
+  let column: Int
+  let row: Int
+
+  static func parse(sgrPayload: String, terminator: Character) -> TerminalMouseEvent? {
+    guard terminator == "M" else {
+      return nil
+    }
+    let fields = sgrPayload.split(separator: ";", omittingEmptySubsequences: false)
+    guard fields.count == 3,
+      let buttonCode = Int(fields[0]),
+      let column = Int(fields[1]),
+      let row = Int(fields[2]),
+      buttonCode >= 0,
+      buttonCode <= 127,
+      column > 0,
+      row > 0,
+      buttonCode & 32 == 0
+    else {
+      return nil
+    }
+
+    let action: TerminalMouseAction
+    if buttonCode & 64 != 0 {
+      guard buttonCode & 3 <= 1 else {
+        return nil
+      }
+      action = buttonCode & 1 == 0 ? .scrollUp : .scrollDown
+    } else {
+      guard buttonCode & 3 == 0 else {
+        return nil
+      }
+      action = .leftPress
+    }
+    return TerminalMouseEvent(action: action, column: column, row: row)
+  }
+}
+
 @MainActor
 final class TerminalPicker: ApplicationPicking {
   private let inputFileDescriptor: Int32
@@ -73,10 +118,10 @@ final class TerminalPicker: ApplicationPicking {
       throw TerminalPickerError.terminalSetupFailed(errno)
     }
 
-    write("\u{001B}[?1049h\u{001B}[?25l")
+    write("\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1000h\u{001B}[?1006h")
     defer {
       _ = tcsetattr(inputFileDescriptor, TCSAFLUSH, &original)
-      write("\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l")
+      write("\u{001B}[?1006l\u{001B}[?1000l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l")
     }
 
     var session = PickerSession(
@@ -89,7 +134,7 @@ final class TerminalPicker: ApplicationPicking {
     render(session: session, dimensions: dimensions, clearScreen: true)
 
     while true {
-      guard let event = try readEvent() else {
+      guard let event = try readEvent(session: session, dimensions: dimensions) else {
         var redraw = false
         var clearScreen = false
         let nextDimensions = terminalDimensions()
@@ -126,7 +171,10 @@ final class TerminalPicker: ApplicationPicking {
     }
   }
 
-  private func readEvent() throws -> PickerEvent? {
+  private func readEvent(
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) throws -> PickerEvent? {
     guard let first = try readByte() else {
       return nil
     }
@@ -149,7 +197,7 @@ final class TerminalPicker: ApplicationPicking {
     case 21:
       return .clear
     case 27:
-      return try readEscapeSequence()
+      return try readEscapeSequence(session: session, dimensions: dimensions)
     case 32...126:
       return .text(String(UnicodeScalar(first)))
     case 194...244:
@@ -159,7 +207,10 @@ final class TerminalPicker: ApplicationPicking {
     }
   }
 
-  private func readEscapeSequence() throws -> PickerEvent? {
+  private func readEscapeSequence(
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) throws -> PickerEvent? {
     guard let second = try readByte() else {
       return .escape
     }
@@ -172,6 +223,10 @@ final class TerminalPicker: ApplicationPicking {
     }
 
     switch third {
+    case 60:
+      return try readMouseEvent().flatMap {
+        pickerEvent(for: $0, session: session, dimensions: dimensions)
+      }
     case 65:
       return .move(-1)
     case 66:
@@ -213,6 +268,67 @@ final class TerminalPicker: ApplicationPicking {
       return .move(pageSize())
     default:
       return nil
+    }
+  }
+
+  private func readMouseEvent() throws -> TerminalMouseEvent? {
+    var payload = ""
+    while payload.utf8.count < 32, let byte = try readByte() {
+      if byte == 77 || byte == 109 {
+        return TerminalMouseEvent.parse(
+          sgrPayload: payload,
+          terminator: Character(UnicodeScalar(byte))
+        )
+      }
+      guard byte == 59 || 48...57 ~= byte else {
+        return nil
+      }
+      payload.append(Character(UnicodeScalar(byte)))
+    }
+    return nil
+  }
+
+  private func pickerEvent(
+    for mouseEvent: TerminalMouseEvent,
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) -> PickerEvent? {
+    switch mouseEvent.action {
+    case .scrollUp:
+      guard case .browse = session.phase else {
+        return nil
+      }
+      return .move(-3)
+    case .scrollDown:
+      guard case .browse = session.phase else {
+        return nil
+      }
+      return .move(3)
+    case .leftPress:
+      if case .filtering = session.phase {
+        return .escape
+      }
+      guard
+        let target = TerminalPickerRenderer.mouseTarget(
+          session: session,
+          dimensions: dimensions,
+          column: mouseEvent.column,
+          row: mouseEvent.row
+        )
+      else {
+        return nil
+      }
+
+      switch target {
+      case .application(let index):
+        return index == session.state.selectedIndex
+          ? .enter
+          : .move(index - session.state.selectedIndex)
+      case .confirmationExecute:
+        return .chooseConfirmation(.execute)
+      case .confirmationCancel:
+        return .chooseConfirmation(.cancel)
+      }
     }
   }
 

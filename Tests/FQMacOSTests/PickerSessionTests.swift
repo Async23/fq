@@ -42,6 +42,34 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.state.selectedApplication, applications[0])
   }
 
+  func testConfirmationButtonsCanBeActivatedDirectlyByMouseChoice() {
+    var cancelSession = makeSession(defaultAction: .forceQuit)
+    _ = cancelSession.handle(.enter)
+    XCTAssertEqual(
+      cancelSession.handle(.chooseConfirmation(.cancel)),
+      .stay(redraw: true)
+    )
+    XCTAssertEqual(cancelSession.phase, .browse)
+
+    var executeSession = makeSession(defaultAction: .forceQuit)
+    _ = executeSession.handle(.enter)
+    XCTAssertEqual(
+      executeSession.handle(.chooseConfirmation(.execute)),
+      .select(
+        ApplicationExitSelection(application: applications[0], action: .forceQuit)
+      )
+    )
+
+    var unavailableSession = makeSession(defaultAction: .forceQuit)
+    _ = unavailableSession.handle(.enter)
+    _ = unavailableSession.replaceApplications(Array(applications.dropFirst()))
+    XCTAssertEqual(
+      unavailableSession.handle(.chooseConfirmation(.execute)),
+      .stay(redraw: false)
+    )
+    XCTAssertFalse(unavailableSession.isConfirmationTargetAvailable)
+  }
+
   func testConfirmationUsesHorizontalOrTabInputButNotVerticalMovement() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.enter)
