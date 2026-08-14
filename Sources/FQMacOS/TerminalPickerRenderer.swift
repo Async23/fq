@@ -238,7 +238,8 @@ enum TerminalPickerRenderer {
       ("u  暂停/继续实时应用列表", .normal),
       ("", .normal),
       ("筛选", .accent),
-      ("f 或 /  编辑 · Delete/Ctrl-U  清除 · Enter  应用 · Esc  还原", .normal),
+      ("f 或 /  编辑 · ←/→/Home/End  移动光标", .normal),
+      ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原", .normal),
       ("", .normal),
       ("操作", .accent),
       ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
@@ -379,8 +380,8 @@ enum TerminalPickerRenderer {
     let actions: [String]
     if case .filtering = session.phase {
       actions = [
-        "─ 输入筛选 │ ↵ 应用 │ esc 还原 │ ^U 清除 ",
-        "─ 输入 │ ↵ 应用 │ esc 返回 ",
+        "─ 输入筛选 │ ←→ 光标 │ ↵ 应用 │ esc 还原 │ ^U 清空 ",
+        "─ 输入 │ ←→ 光标 │ ↵ 应用 │ esc 返回 ",
         "─ ↵ 应用 │ esc ",
         "─ ",
       ]
@@ -418,9 +419,15 @@ enum TerminalPickerRenderer {
     if let message = session.statusMessage {
       left = " 提示  \(message)"
       baseRight = "f / 筛选"
-    } else if case .filtering = session.phase {
-      left = " 筛选› \(query)█"
-      baseRight = "↵ 应用 · esc 还原"
+    } else if case .filtering(let edit) = session.phase {
+      let baseRight = "↵ 应用 · esc 还原"
+      let right = session.isPaused ? "已暂停 · \(baseRight)" : baseRight
+      return fitFilterEditor(
+        query: session.state.query,
+        cursorOffset: edit.cursorOffset,
+        right: right,
+        width: width
+      )
     } else if query.isEmpty {
       left = " 筛选  全部应用"
       baseRight = "\(visibleCount) 个应用"
@@ -431,6 +438,62 @@ enum TerminalPickerRenderer {
 
     let right = session.isPaused ? "已暂停 · \(baseRight)" : baseRight
     return fit(left: left, right: right, width: width)
+  }
+
+  private static func fitFilterEditor(
+    query: String,
+    cursorOffset: Int,
+    right: String,
+    width: Int
+  ) -> String {
+    guard width > 0 else {
+      return ""
+    }
+
+    let rightText = TerminalText.clipped(
+      right,
+      to: min(TerminalText.displayWidth(right), width / 2)
+    )
+    let availableLeft = max(
+      0,
+      width - TerminalText.displayWidth(rightText) - (rightText.isEmpty ? 0 : 1)
+    )
+    let leftText = filterEditor(
+      query: query,
+      cursorOffset: cursorOffset,
+      width: availableLeft
+    )
+    let spacing = max(
+      0,
+      width - TerminalText.displayWidth(leftText) - TerminalText.displayWidth(rightText)
+    )
+    return leftText + String(repeating: " ", count: spacing) + rightText
+  }
+
+  private static func filterEditor(
+    query: String,
+    cursorOffset: Int,
+    width: Int
+  ) -> String {
+    let label = " 筛选› "
+    let labelWidth = TerminalText.displayWidth(label)
+    guard width > labelWidth else {
+      return TerminalText.clipped(label, to: width)
+    }
+
+    let characters = Array(query)
+    let cursor = min(max(0, cursorOffset), characters.count)
+    let prefix = TerminalText.sanitize(String(characters[..<cursor]))
+    let suffix = TerminalText.sanitize(String(characters[cursor...]))
+    let contentWidth = width - labelWidth - 1
+    var leftBudget = min(TerminalText.displayWidth(prefix), contentWidth / 2)
+    var rightBudget = min(TerminalText.displayWidth(suffix), contentWidth - leftBudget)
+    leftBudget = min(TerminalText.displayWidth(prefix), contentWidth - rightBudget)
+    rightBudget = min(TerminalText.displayWidth(suffix), contentWidth - leftBudget)
+
+    let visiblePrefix = TerminalText.suffixFitting(prefix, in: leftBudget)
+    let visibleSuffix = TerminalText.prefixFitting(suffix, in: rightBudget)
+    return label + visiblePrefix + "█" + visibleSuffix
   }
 
   private static func tableLine(

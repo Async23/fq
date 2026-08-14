@@ -26,4 +26,12 @@ final class TerminalTextTests: XCTestCase {
     XCTAssertEqual(TerminalText.displayWidth(TerminalText.padded("访达", to: 8)), 8)
     XCTAssertEqual(TerminalText.centered("fq", in: 6), "  fq  ")
   }
+
+  func testPrefixAndSuffixWindowsDoNotSplitWideCharacters() {
+    XCTAssertEqual(TerminalText.prefixFitting("A访达B", in: 3), "A访")
+    XCTAssertEqual(TerminalText.prefixFitting("A访达B", in: 2), "A")
+    XCTAssertEqual(TerminalText.suffixFitting("A访达B", in: 3), "达B")
+    XCTAssertEqual(TerminalText.suffixFitting("A访达B", in: 2), "B")
+    XCTAssertEqual(TerminalText.prefixFitting("👨‍💻Z", in: 2), "👨‍💻")
+  }
 }

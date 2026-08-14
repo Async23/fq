@@ -66,6 +66,36 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertFalse(output.contains("Ghostty"))
   }
 
+  func testFilteringViewRendersCursorInsideUnicodeQuery() {
+    var session = makeSession()
+    _ = session.handle(.text("/"))
+    _ = session.handle(.text("微"))
+    _ = session.handle(.text("信"))
+    _ = session.handle(.moveHorizontal(-1))
+
+    let output = render(session, rows: 16, columns: 90)
+
+    XCTAssertTrue(output.contains("筛选› 微█信"))
+    XCTAssertEqual(session.filterCursorOffset, 1)
+    XCTAssertTrue(renderedLines(output).allSatisfy { TerminalText.displayWidth($0) == 89 })
+  }
+
+  func testLongFilterScrollsHorizontallyToKeepCursorVisible() {
+    var session = PickerSession(
+      applications: applications,
+      initialQuery: "abcdefghijklmnopqrstuvwxyz0123456789",
+      defaultAction: .forceQuit
+    )
+    _ = session.handle(.text("f"))
+
+    let output = render(session, rows: 12, columns: 50)
+    let statusLine = renderedLines(output)[1]
+
+    XCTAssertTrue(statusLine.contains("█"))
+    XCTAssertFalse(statusLine.contains("abcdefgh"))
+    XCTAssertEqual(TerminalText.displayWidth(statusLine), 49)
+  }
+
   func testForceConfirmationStaysInsidePickerAndExplainsFinderRelaunch() {
     var session = PickerSession(
       applications: [applications[2]],
@@ -94,6 +124,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
     XCTAssertTrue(output.contains("u  暂停/继续实时应用列表"))
     XCTAssertTrue(output.contains("f 或 /"))
+    XCTAssertTrue(output.contains("Backspace/Delete  删除"))
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
     XCTAssertTrue(output.contains("q 或 Esc"))

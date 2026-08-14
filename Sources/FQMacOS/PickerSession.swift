@@ -15,9 +15,87 @@ struct PickerConfirmation: Equatable {
   var choice: PickerConfirmationChoice = .cancel
 }
 
+struct PickerFilterEdit: Equatable {
+  let originalQuery: String
+  private(set) var cursorOffset: Int
+
+  init(query: String) {
+    originalQuery = query
+    cursorOffset = query.count
+  }
+
+  mutating func moveCursor(by offset: Int, in query: String) -> Bool {
+    let previousOffset = cursorOffset
+    cursorOffset = min(max(0, cursorOffset + offset), query.count)
+    return cursorOffset != previousOffset
+  }
+
+  mutating func moveToStart() -> Bool {
+    guard cursorOffset != 0 else {
+      return false
+    }
+    cursorOffset = 0
+    return true
+  }
+
+  mutating func moveToEnd(of query: String) -> Bool {
+    guard cursorOffset != query.count else {
+      return false
+    }
+    cursorOffset = query.count
+    return true
+  }
+
+  mutating func inserting(_ text: String, into query: String) -> String {
+    let (prefix, suffix) = split(query)
+    let updatedPrefix = prefix + text
+    let updatedQuery = updatedPrefix + suffix
+    cursorOffset = min(updatedPrefix.count, updatedQuery.count)
+    return updatedQuery
+  }
+
+  mutating func deletingBackward(in query: String) -> String? {
+    var characters = Array(query)
+    cursorOffset = min(cursorOffset, characters.count)
+    guard cursorOffset > 0 else {
+      return nil
+    }
+    characters.remove(at: cursorOffset - 1)
+    cursorOffset -= 1
+    return String(characters)
+  }
+
+  mutating func deletingForward(in query: String) -> String? {
+    var characters = Array(query)
+    cursorOffset = min(cursorOffset, characters.count)
+    guard cursorOffset < characters.count else {
+      return nil
+    }
+    characters.remove(at: cursorOffset)
+    return String(characters)
+  }
+
+  mutating func clear(query: String) -> String? {
+    guard !query.isEmpty else {
+      return nil
+    }
+    cursorOffset = 0
+    return ""
+  }
+
+  private func split(_ query: String) -> (String, String) {
+    let characters = Array(query)
+    let offset = min(cursorOffset, characters.count)
+    return (
+      String(characters[..<offset]),
+      String(characters[offset...])
+    )
+  }
+}
+
 enum PickerPhase: Equatable {
   case browse
-  case filtering(originalQuery: String)
+  case filtering(PickerFilterEdit)
   case confirming(PickerConfirmation)
   case help
 }
@@ -32,6 +110,7 @@ enum PickerEvent: Equatable {
   case first
   case last
   case backspace
+  case deleteForward
   case clear
   case redraw
   case text(String)
@@ -73,6 +152,13 @@ struct PickerSession {
       return nil
     }
     return confirmation.choice
+  }
+
+  var filterCursorOffset: Int? {
+    guard case .filtering(let edit) = phase else {
+      return nil
+    }
+    return edit.cursorOffset
   }
 
   var isConfirmationTargetAvailable: Bool {
@@ -135,8 +221,8 @@ struct PickerSession {
     switch phase {
     case .browse:
       return handleBrowse(event)
-    case .filtering(let originalQuery):
-      return handleFiltering(event, originalQuery: originalQuery)
+    case .filtering(let edit):
+      return handleFiltering(event, edit: edit)
     case .confirming(let confirmation):
       return handleConfirmation(event, confirmation: confirmation)
     case .help:
@@ -164,9 +250,8 @@ struct PickerSession {
       guard !state.query.isEmpty else {
         return .stay(redraw: false)
       }
-      beginFiltering()
-      state.deleteLastQueryCharacter()
-    case .clear:
+      return handleFiltering(.backspace, edit: PickerFilterEdit(query: state.query))
+    case .deleteForward, .clear:
       guard !state.query.isEmpty else {
         return .stay(redraw: false)
       }
@@ -199,28 +284,56 @@ struct PickerSession {
 
   private mutating func handleFiltering(
     _ event: PickerEvent,
-    originalQuery: String
+    edit: PickerFilterEdit
   ) -> PickerDecision {
+    var updatedEdit = edit
     switch event {
-    case .enter, .move:
+    case .enter:
       phase = .browse
-    case .moveHorizontal, .cycleFocus:
+    case .move(let offset) where offset == 1:
+      phase = .browse
+      state.moveSelection(by: offset)
+    case .move, .cycleFocus:
       return .stay(redraw: false)
+    case .moveHorizontal(let offset):
+      guard updatedEdit.moveCursor(by: offset, in: state.query) else {
+        return .stay(redraw: false)
+      }
+      phase = .filtering(updatedEdit)
     case .escape:
-      state.replaceQuery(originalQuery)
+      state.replaceQuery(edit.originalQuery)
       phase = .browse
     case .first:
-      state.moveToFirst()
-      phase = .browse
+      guard updatedEdit.moveToStart() else {
+        return .stay(redraw: false)
+      }
+      phase = .filtering(updatedEdit)
     case .last:
-      state.moveToLast()
-      phase = .browse
+      guard updatedEdit.moveToEnd(of: state.query) else {
+        return .stay(redraw: false)
+      }
+      phase = .filtering(updatedEdit)
     case .backspace:
-      state.deleteLastQueryCharacter()
+      guard let query = updatedEdit.deletingBackward(in: state.query) else {
+        return .stay(redraw: false)
+      }
+      state.replaceQuery(query)
+      phase = .filtering(updatedEdit)
+    case .deleteForward:
+      guard let query = updatedEdit.deletingForward(in: state.query) else {
+        return .stay(redraw: false)
+      }
+      state.replaceQuery(query)
+      phase = .filtering(updatedEdit)
     case .clear:
-      state.clearQuery()
+      guard let query = updatedEdit.clear(query: state.query) else {
+        return .stay(redraw: false)
+      }
+      state.replaceQuery(query)
+      phase = .filtering(updatedEdit)
     case .text(let text):
-      state.appendToQuery(text)
+      state.replaceQuery(updatedEdit.inserting(text, into: state.query))
+      phase = .filtering(updatedEdit)
     case .interrupt, .redraw:
       return .stay(redraw: false)
     }
@@ -268,7 +381,7 @@ struct PickerSession {
   }
 
   private mutating func beginFiltering() {
-    phase = .filtering(originalQuery: state.query)
+    phase = .filtering(PickerFilterEdit(query: state.query))
   }
 
   private mutating func togglePause() {

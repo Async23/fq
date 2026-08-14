@@ -42,6 +42,42 @@ enum TerminalText {
     return result + "…"
   }
 
+  static func prefixFitting(_ text: String, in maximumWidth: Int) -> String {
+    guard maximumWidth > 0 else {
+      return ""
+    }
+
+    var result = ""
+    var width = 0
+    for character in text {
+      let characterWidth = displayWidth(String(character))
+      guard width + characterWidth <= maximumWidth else {
+        break
+      }
+      result.append(character)
+      width += characterWidth
+    }
+    return result
+  }
+
+  static func suffixFitting(_ text: String, in maximumWidth: Int) -> String {
+    guard maximumWidth > 0 else {
+      return ""
+    }
+
+    var characters: [Character] = []
+    var width = 0
+    for character in text.reversed() {
+      let characterWidth = displayWidth(String(character))
+      guard width + characterWidth <= maximumWidth else {
+        break
+      }
+      characters.append(character)
+      width += characterWidth
+    }
+    return String(characters.reversed())
+  }
+
   static func padded(_ text: String, to targetWidth: Int) -> String {
     let clippedText = clipped(text, to: targetWidth)
     return clippedText

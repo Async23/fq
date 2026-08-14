@@ -119,7 +119,7 @@ final class PickerSessionTests: XCTestCase {
     )
 
     XCTAssertEqual(session.handle(.text("f")), .stay(redraw: true))
-    XCTAssertEqual(session.phase, .filtering(originalQuery: "a"))
+    XCTAssertEqual(session.phase, .filtering(PickerFilterEdit(query: "a")))
 
     _ = session.handle(.text("q"))
     XCTAssertEqual(session.state.query, "aq")
@@ -143,10 +143,67 @@ final class PickerSessionTests: XCTestCase {
     _ = session.handle(.text("b"))
     _ = session.handle(.text("r"))
 
-    XCTAssertEqual(session.phase, .filtering(originalQuery: ""))
+    guard case .filtering(let edit) = session.phase else {
+      return XCTFail("Expected filtering phase")
+    }
+    XCTAssertEqual(edit.originalQuery, "")
+    XCTAssertEqual(edit.cursorOffset, 2)
     XCTAssertEqual(session.state.query, "br")
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
+  }
+
+  func testFilterEditorSupportsUnicodeCursorInsertionAndDeletion() {
+    var session = PickerSession(
+      applications: applications,
+      initialQuery: "A访👨‍💻Z",
+      defaultAction: .forceQuit
+    )
+    _ = session.handle(.text("f"))
+
+    XCTAssertEqual(session.filterCursorOffset, 4)
+    XCTAssertEqual(session.handle(.first), .stay(redraw: true))
+    XCTAssertEqual(session.filterCursorOffset, 0)
+    _ = session.handle(.moveHorizontal(2))
+    XCTAssertEqual(session.filterCursorOffset, 2)
+
+    _ = session.handle(.text("新"))
+    XCTAssertEqual(session.state.query, "A访新👨‍💻Z")
+    XCTAssertEqual(session.filterCursorOffset, 3)
+
+    _ = session.handle(.backspace)
+    XCTAssertEqual(session.state.query, "A访👨‍💻Z")
+    XCTAssertEqual(session.filterCursorOffset, 2)
+
+    _ = session.handle(.deleteForward)
+    XCTAssertEqual(session.state.query, "A访Z")
+    XCTAssertEqual(session.filterCursorOffset, 2)
+
+    _ = session.handle(.last)
+    _ = session.handle(.backspace)
+    XCTAssertEqual(session.state.query, "A访")
+    XCTAssertEqual(session.filterCursorOffset, 2)
+
+    _ = session.handle(.clear)
+    XCTAssertEqual(session.state.query, "")
+    XCTAssertEqual(session.filterCursorOffset, 0)
+
+    _ = session.handle(.escape)
+    XCTAssertEqual(session.state.query, "A访👨‍💻Z")
+    XCTAssertEqual(session.phase, .browse)
+  }
+
+  func testFilterDownAppliesQueryAndMovesWhileUpKeepsEditing() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.text("f"))
+    _ = session.handle(.text("a"))
+
+    XCTAssertEqual(session.handle(.move(-1)), .stay(redraw: false))
+    XCTAssertNotNil(session.filterCursorOffset)
+
+    XCTAssertEqual(session.handle(.move(1)), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
+    XCTAssertEqual(session.state.selectedApplication?.name, "Bravo")
   }
 
   func testBrowseCommandsClearNavigateHelpAndCancel() {
@@ -156,7 +213,7 @@ final class PickerSessionTests: XCTestCase {
       defaultAction: .forceQuit
     )
 
-    _ = session.handle(.clear)
+    _ = session.handle(.deleteForward)
     XCTAssertEqual(session.state.query, "")
 
     _ = session.handle(.last)

@@ -200,7 +200,7 @@ final class TerminalPicker: ApplicationPicking {
       guard try readByte() == 126 else {
         return nil
       }
-      return .clear
+      return .deleteForward
     case 53:
       guard try readByte() == 126 else {
         return nil

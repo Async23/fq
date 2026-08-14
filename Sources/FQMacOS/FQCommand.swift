@@ -172,9 +172,10 @@ public final class FQCommand {
       ← / →，r                切换排序字段 / 反转排序
       u                       暂停 / 恢复实时应用列表
       f 或 /                   进入筛选
+      筛选中 ←/→，Home/End     移动光标；Backspace/Delete 删除
       Enter                   打开当前模式的动作面板
       t / k                   打开正常退出 / 强制退出动作
-      Delete / Ctrl-U         清空筛选
+      Ctrl-U；浏览中 Delete    清空筛选
       ?                       查看选择器内帮助
       q / Esc / Ctrl-C        取消
 
