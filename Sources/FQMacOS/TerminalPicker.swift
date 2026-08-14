@@ -139,7 +139,7 @@ final class TerminalPicker: ApplicationPicking {
     case 8, 127:
       return .backspace
     case 9:
-      return .toggleChoice
+      return .cycleFocus
     case 14:
       return .move(1)
     case 12:
@@ -177,15 +177,15 @@ final class TerminalPicker: ApplicationPicking {
     case 66:
       return .move(1)
     case 67:
-      return .toggleChoice
+      return .moveHorizontal(1)
     case 68:
-      return .toggleChoice
+      return .moveHorizontal(-1)
     case 72:
       return .first
     case 70:
       return .last
     case 90:
-      return .toggleChoice
+      return .cycleFocus
     case 49, 55:
       guard try readByte() == 126 else {
         return nil

@@ -51,7 +51,8 @@ func coreCandidate(
   pid: Int32,
   name: String,
   bundleIdentifier: String? = nil,
-  isActive: Bool = false
+  isActive: Bool = false,
+  isHidden: Bool = false
 ) -> ApplicationCandidate {
   ApplicationCandidate(
     id: ApplicationIdentity(
@@ -60,6 +61,7 @@ func coreCandidate(
       launchDate: nil
     ),
     name: name,
-    isActive: isActive
+    isActive: isActive,
+    isHidden: isHidden
   )
 }

@@ -132,8 +132,9 @@ enum TerminalPickerRenderer {
     let visible = session.state.visibleApplications
     let application = session.state.selectedApplication
     let action = session.defaultAction == .forceQuit ? "强退" : "退出"
+    let sort = sortLabel(session.state.sortOrder)
     let values = [
-      "fq · \(action)",
+      "fq · \(action) · \(sort)",
       application.map { "> \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)" }
         ?? "没有匹配",
       "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count) · ↑↓ · ↵ · q",
@@ -231,6 +232,9 @@ enum TerminalPickerRenderer {
       ("导航", .accent),
       ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
       ("", .normal),
+      ("排序", .accent),
+      ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
+      ("", .normal),
       ("筛选", .accent),
       ("f 或 /  编辑 · Delete/Ctrl-U  清除 · Enter  应用 · Esc  还原", .normal),
       ("", .normal),
@@ -283,7 +287,7 @@ enum TerminalPickerRenderer {
         horizontalBorder(
           start: "┌",
           end: "┐",
-          leading: "─ 1 fq ",
+          leading: "─ fq ",
           trailing: " \(title) ─",
           width: width
         ),
@@ -327,23 +331,40 @@ enum TerminalPickerRenderer {
 
   private static func topBorder(session: PickerSession, width: Int) -> String {
     let action = session.defaultAction == .forceQuit ? "模式 强退" : "模式 退出"
-    let trailing: String
-    if width >= 68 {
-      trailing = " f 筛选 │ 实时 │ \(action) ─"
-    } else if width >= 58 {
-      trailing = " f 筛选 │ \(action) ─"
-    } else if width >= 36 {
-      trailing = " \(action) ─"
-    } else {
-      trailing = "─"
-    }
+    let sort = sortLabel(session.state.sortOrder)
+    let reverse = session.state.isSortReversed ? "r 反向:开" : "r 反向:关"
+    let leading = width >= 10 ? "─ fq " : "─"
+    let candidates = [
+      " f 筛选 │ \(reverse) │ ‹ \(sort) › │ 实时 │ \(action) ─",
+      " \(reverse) │ ‹ \(sort) › │ \(action) ─",
+      " ‹ \(sort) › │ \(action) ─",
+      " \(action) ─",
+      "─",
+    ]
+    let trailing =
+      candidates.first(where: {
+        TerminalText.displayWidth(leading) + TerminalText.displayWidth($0) <= width - 2
+      }) ?? "─"
     return horizontalBorder(
       start: "┌",
       end: "┐",
-      leading: width >= 12 ? "─ 1 fq " : "─ fq ",
+      leading: leading,
       trailing: trailing,
       width: width
     )
+  }
+
+  private static func sortLabel(_ order: PickerSortOrder) -> String {
+    switch order {
+    case .smart:
+      "智能"
+    case .name:
+      "应用"
+    case .processIdentifier:
+      "PID"
+    case .status:
+      "状态"
+    }
   }
 
   private static func bottomBorder(session: PickerSession, width: Int) -> String {

@@ -27,7 +27,8 @@ enum PickerEvent: Equatable {
   case escape
   case interrupt
   case move(Int)
-  case toggleChoice
+  case moveHorizontal(Int)
+  case cycleFocus
   case first
   case last
   case backspace
@@ -134,7 +135,9 @@ struct PickerSession {
       return .cancel
     case .move(let offset):
       state.moveSelection(by: offset)
-    case .toggleChoice:
+    case .moveHorizontal(let offset):
+      state.cycleSort(by: offset)
+    case .cycleFocus:
       return .stay(redraw: false)
     case .first:
       state.moveToFirst()
@@ -163,6 +166,8 @@ struct PickerSession {
         return requestExit(.quit)
       case "k":
         return requestExit(.forceQuit)
+      case "r":
+        state.toggleSortDirection()
       default:
         statusMessage = "筛选请先按 f 或 /"
       }
@@ -180,7 +185,7 @@ struct PickerSession {
     switch event {
     case .enter, .move:
       phase = .browse
-    case .toggleChoice:
+    case .moveHorizontal, .cycleFocus:
       return .stay(redraw: false)
     case .escape:
       state.replaceQuery(originalQuery)
@@ -215,7 +220,7 @@ struct PickerSession {
         return .stay(redraw: true)
       }
       return .select(confirmation.selection)
-    case .toggleChoice:
+    case .moveHorizontal, .cycleFocus:
       guard isConfirmationTargetAvailable else {
         return .stay(redraw: false)
       }
@@ -249,7 +254,8 @@ struct PickerSession {
 
   private mutating func requestExit(_ action: ApplicationExitAction) -> PickerDecision {
     guard let application = state.selectedApplication else {
-      return .stay(redraw: false)
+      statusMessage = state.query.isEmpty ? "没有可操作的应用" : "当前筛选没有匹配"
+      return .stay(redraw: true)
     }
 
     let selection = ApplicationExitSelection(application: application, action: action)

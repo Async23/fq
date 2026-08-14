@@ -26,7 +26,7 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.phase, .browse)
 
     _ = session.handle(.enter)
-    XCTAssertEqual(session.handle(.toggleChoice), .stay(redraw: true))
+    XCTAssertEqual(session.handle(.cycleFocus), .stay(redraw: true))
     XCTAssertEqual(
       session.handle(.enter),
       .select(selection)
@@ -42,17 +42,17 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.state.selectedApplication, applications[0])
   }
 
-  func testOnlyHorizontalChoiceInputChangesConfirmationSelection() {
+  func testConfirmationUsesHorizontalOrTabInputButNotVerticalMovement() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.enter)
 
     XCTAssertEqual(session.handle(.move(-1)), .stay(redraw: false))
     XCTAssertEqual(session.confirmationChoice, .cancel)
 
-    _ = session.handle(.toggleChoice)
+    _ = session.handle(.moveHorizontal(-1))
     XCTAssertEqual(session.confirmationChoice, .execute)
 
-    _ = session.handle(.toggleChoice)
+    _ = session.handle(.cycleFocus)
     XCTAssertEqual(session.confirmationChoice, .cancel)
   }
 
@@ -70,7 +70,7 @@ final class PickerSessionTests: XCTestCase {
         )
       )
     )
-    _ = terminateSession.handle(.toggleChoice)
+    _ = terminateSession.handle(.cycleFocus)
     XCTAssertEqual(
       terminateSession.handle(.enter),
       .select(ApplicationExitSelection(application: applications[0], action: .quit))
@@ -170,6 +170,20 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.handle(.text("q")), .cancel)
   }
 
+  func testBrowseHorizontalAndReverseCommandsControlSorting() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.move(1))
+    XCTAssertEqual(session.state.selectedApplication?.name, "Bravo")
+
+    XCTAssertEqual(session.handle(.moveHorizontal(1)), .stay(redraw: true))
+    XCTAssertEqual(session.state.sortOrder, .name)
+    XCTAssertEqual(session.state.selectedApplication?.name, "Bravo")
+
+    XCTAssertEqual(session.handle(.text("r")), .stay(redraw: true))
+    XCTAssertTrue(session.state.isSortReversed)
+    XCTAssertEqual(session.state.selectedApplication?.name, "Bravo")
+  }
+
   func testRefreshPreservesSelectionAndUpdatesCandidateMetadata() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.move(1))
@@ -185,7 +199,7 @@ final class PickerSessionTests: XCTestCase {
   func testConfirmationRemainsPinnedWhenTargetDisappearsDuringRefresh() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.enter)
-    _ = session.handle(.toggleChoice)
+    _ = session.handle(.cycleFocus)
     XCTAssertEqual(session.confirmationChoice, .execute)
 
     XCTAssertTrue(session.replaceApplications(Array(applications.dropFirst())))

@@ -23,8 +23,9 @@ final class TerminalPickerRendererTests: XCTestCase {
   func testWidePickerUsesBtopStyleFrameColumnsActionsAndLocation() {
     let output = render(makeSession(), rows: 24, columns: 100)
 
-    XCTAssertTrue(output.contains("┌─ 1 fq"))
-    XCTAssertTrue(output.contains("f 筛选 │ 实时 │ 模式 强退"))
+    XCTAssertTrue(output.contains("┌─ fq"))
+    XCTAssertFalse(output.contains("┌─ 1 fq"))
+    XCTAssertTrue(output.contains("f 筛选 │ r 反向:关 │ ‹ 智能 › │ 实时 │ 模式 强退"))
     XCTAssertTrue(output.contains("PID"))
     XCTAssertTrue(output.contains("应用"))
     XCTAssertTrue(output.contains("BUNDLE ID"))
@@ -88,6 +89,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     let output = render(session, rows: 20, columns: 100)
 
     XCTAssertTrue(output.contains("导航"))
+    XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
     XCTAssertTrue(output.contains("f 或 /"))
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
@@ -115,6 +117,35 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("提示  筛选请先按 f 或 /"))
     XCTAssertTrue(output.contains("f / 筛选"))
     XCTAssertEqual(session.state.query, "")
+  }
+
+  func testBrowseHeaderReflectsSortFieldAndReverseState() {
+    var session = makeSession()
+
+    _ = session.handle(.moveHorizontal(1))
+    var output = render(session, rows: 16, columns: 90)
+    XCTAssertTrue(output.contains("‹ 应用 ›"))
+    XCTAssertTrue(output.contains("r 反向:关"))
+
+    _ = session.handle(.text("r"))
+    output = render(session, rows: 16, columns: 90)
+    XCTAssertTrue(output.contains("‹ 应用 ›"))
+    XCTAssertTrue(output.contains("r 反向:开"))
+  }
+
+  func testActionOnEmptyFilterExplainsWhyNothingOpened() {
+    var session = PickerSession(
+      applications: applications,
+      initialQuery: "does-not-match",
+      defaultAction: .forceQuit
+    )
+
+    XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
+    let output = render(session, rows: 16, columns: 90)
+
+    XCTAssertEqual(session.phase, .browse)
+    XCTAssertTrue(output.contains("提示  当前筛选没有匹配"))
+    XCTAssertTrue(output.contains("0/0"))
   }
 
   func testConfirmationDisablesActionWhenRefreshedTargetHasExited() {

@@ -169,6 +169,7 @@ public final class FQCommand {
 
     选择器按键：
       ↑ / ↓，PgUp / PgDn      移动选择；Home / End 跳转
+      ← / →，r                切换排序字段 / 反转排序
       f 或 /                   进入筛选
       Enter                   打开当前模式的动作面板
       t / k                   打开正常退出 / 强制退出动作
