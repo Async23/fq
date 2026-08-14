@@ -132,6 +132,42 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("q 或 Esc"))
   }
 
+  func testHelpKeepsSafetyAndExitCommandsVisibleAsHeightShrinks() {
+    var session = makeSession()
+    _ = session.handle(.text("?"))
+
+    let common = render(session, rows: 16, columns: 90)
+    XCTAssertTrue(common.contains("动作面板默认选择取消"))
+    XCTAssertTrue(common.contains("q 或 Esc  关闭 fq"))
+    XCTAssertEqual(renderedLines(common).count, 16)
+
+    let condensed = render(session, rows: 10, columns: 60)
+    XCTAssertTrue(condensed.contains("确认默认选择取消"))
+    XCTAssertTrue(condensed.contains("q 或 Esc 关闭 fq"))
+    XCTAssertEqual(renderedLines(condensed).count, 10)
+
+    let terse = render(session, rows: 6, columns: 40)
+    XCTAssertTrue(terse.contains("确认默认取消 · q/Esc 返回"))
+    XCTAssertEqual(renderedLines(terse).count, 6)
+
+    let singleLineDimensions = TerminalDimensions(rows: 1, columns: 10)
+    let singleLine = render(
+      session,
+      rows: singleLineDimensions.rows,
+      columns: singleLineDimensions.columns
+    )
+    XCTAssertTrue(singleLine.contains("q/Esc"))
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: singleLineDimensions,
+        column: 1,
+        row: 1
+      ),
+      .command(.escape)
+    )
+  }
+
   func testMouseHitTestingTracksVisibleRowsAfterScrolling() {
     let manyApplications = (1...20).map { index in
       rendererCandidate(pid: Int32(index), name: "App \(index)")
@@ -352,6 +388,71 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(targets.contains(.confirmationCancel))
   }
 
+  func testCompactConfirmationAlwaysShowsAndMapsItsCurrentFocus() {
+    var session = makeSession()
+    _ = session.handle(.enter)
+    let shortDimensions = TerminalDimensions(rows: 7, columns: 40)
+    var output = render(
+      session,
+      rows: shortDimensions.rows,
+      columns: shortDimensions.columns
+    )
+
+    XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
+    XCTAssertTrue(output.contains("未保存的内容可能会丢失"))
+    XCTAssertTrue(
+      mouseTargets(session: session, dimensions: shortDimensions).contains(.confirmationExecute))
+    XCTAssertTrue(
+      mouseTargets(session: session, dimensions: shortDimensions).contains(.confirmationCancel))
+
+    var narrowSession = makeSession()
+    _ = narrowSession.handle(.enter)
+    let oneLineDimensions = TerminalDimensions(rows: 1, columns: 10)
+    output = render(
+      narrowSession,
+      rows: oneLineDimensions.rows,
+      columns: oneLineDimensions.columns
+    )
+    XCTAssertTrue(output.contains("▸取消◂"))
+    XCTAssertFalse(
+      mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
+        .contains(.confirmationExecute)
+    )
+    XCTAssertTrue(
+      mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
+        .contains(.confirmationCancel)
+    )
+
+    _ = narrowSession.handle(.moveHorizontal(1))
+    output = render(
+      narrowSession,
+      rows: oneLineDimensions.rows,
+      columns: oneLineDimensions.columns
+    )
+    XCTAssertTrue(output.contains("▸执行◂"))
+    XCTAssertTrue(
+      mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
+        .contains(.confirmationExecute)
+    )
+    XCTAssertFalse(
+      mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
+        .contains(.confirmationCancel)
+    )
+  }
+
+  func testCompactConfirmationExposesOnlyReturnAfterTargetExits() {
+    var session = makeSession()
+    _ = session.handle(.enter)
+    _ = session.replaceApplications([])
+    let dimensions = TerminalDimensions(rows: 3, columns: 16)
+    let output = render(session, rows: dimensions.rows, columns: dimensions.columns)
+    let targets = mouseTargets(session: session, dimensions: dimensions)
+
+    XCTAssertTrue(output.contains("[ 返回 ]"))
+    XCTAssertFalse(targets.contains(.confirmationExecute))
+    XCTAssertTrue(targets.contains(.confirmationCancel))
+  }
+
   func testNormalQuitShortcutOpensNonDestructiveActionPanel() {
     var session = makeSession()
     _ = session.handle(.text("t"))
@@ -479,6 +580,26 @@ final class TerminalPickerRendererTests: XCTestCase {
       column: column,
       row: row
     )
+  }
+
+  private func mouseTargets(
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) -> [PickerMouseTarget] {
+    var targets: [PickerMouseTarget] = []
+    for row in 1...dimensions.rows {
+      for column in 1..<dimensions.columns {
+        if let target = TerminalPickerRenderer.mouseTarget(
+          session: session,
+          dimensions: dimensions,
+          column: column,
+          row: row
+        ) {
+          targets.append(target)
+        }
+      }
+    }
+    return targets
   }
 }
 

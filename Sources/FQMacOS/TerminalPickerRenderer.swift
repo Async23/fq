@@ -14,6 +14,18 @@ enum PickerMouseTarget: Equatable {
 }
 
 enum TerminalPickerRenderer {
+  private struct CompactConfirmationLayout {
+    let lines: [String]
+    let buttons: String
+    let buttonRow: Int?
+  }
+
+  private struct CompactHelpLayout {
+    let lines: [String]
+    let returnLabel: String
+    let returnRow: Int?
+  }
+
   static func render(
     session: PickerSession,
     dimensions: TerminalDimensions,
@@ -207,17 +219,22 @@ enum TerminalPickerRenderer {
     column: Int,
     row: Int
   ) -> PickerMouseTarget? {
-    if height < 6 || width < 20 {
-      guard row == 2, height >= 2 else {
+    if !usesFramedHelp(height: height, width: width) {
+      let layout = compactHelpLayout(height: height)
+      guard let returnRow = layout.returnRow, row == returnRow else {
         return nil
       }
-      let line = TerminalText.padded(compactHelpValues[1], to: width)
-      guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
-        column <= TerminalText.displayWidth(TerminalText.clipped(compactHelpValues[1], to: width))
-      else {
+      let visibleLabel = TerminalText.clipped(layout.returnLabel, to: width)
+      guard !visibleLabel.isEmpty else {
         return nil
       }
-      return .command(.escape)
+      let line = TerminalText.centered(layout.returnLabel, in: width)
+      return contains(
+        column: column,
+        label: visibleLabel,
+        in: line,
+        startingAt: 1
+      ) ? .command(.escape) : nil
     }
 
     guard row == height else {
@@ -290,9 +307,19 @@ enum TerminalPickerRenderer {
     column: Int,
     row: Int
   ) -> PickerMouseTarget? {
+    guard usesFullConfirmation(height: height, width: width) else {
+      return compactConfirmationMouseTarget(
+        session: session,
+        height: height,
+        width: width,
+        column: column,
+        row: row
+      )
+    }
+
     let contentCount = 6
     let interiorRows = height - 2
-    guard height >= 8, width >= 20, interiorRows >= contentCount else {
+    guard interiorRows >= contentCount else {
       return nil
     }
 
@@ -328,6 +355,31 @@ enum TerminalPickerRenderer {
       in: buttons,
       startingAt: startColumn
     ) {
+      return .confirmationCancel
+    }
+    return nil
+  }
+
+  private static func compactConfirmationMouseTarget(
+    session: PickerSession,
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    let layout = compactConfirmationLayout(session: session, height: height, width: width)
+    guard let buttonRow = layout.buttonRow, row == buttonRow else {
+      return nil
+    }
+    let line = TerminalText.centered(layout.buttons, in: width)
+
+    if session.isConfirmationTargetAvailable,
+      contains(column: column, label: "执行", in: line, startingAt: 1)
+    {
+      return .confirmationExecute
+    }
+    let cancelLabel = session.isConfirmationTargetAvailable ? "取消" : "返回"
+    if contains(column: column, label: cancelLabel, in: line, startingAt: 1) {
       return .confirmationCancel
     }
     return nil
@@ -483,24 +535,19 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
-    let selection = session.confirmationSelection
-    let actionName = selection?.action == .quit ? "正常退出" : "强制退出"
-    guard height >= 6, width >= 20 else {
-      let name =
-        selection.map {
-          TerminalText.sanitize($0.application.name)
-        } ?? "-"
-      let action =
-        session.isConfirmationTargetAvailable
-        ? "←→ 选择 · ↵ 执行" : "目标已退出 · ↵ 返回"
+    guard usesFullConfirmation(height: height, width: width) else {
+      let layout = compactConfirmationLayout(session: session, height: height, width: width)
       return compactOverlayLines(
-        ["确认\(actionName)", name, action],
+        layout.lines,
         height: height,
         width: width,
-        colorEnabled: colorEnabled
+        colorEnabled: colorEnabled,
+        accentedRow: layout.buttonRow.map { $0 - 1 }
       )
     }
 
+    let selection = session.confirmationSelection
+    let actionName = selection?.action == .quit ? "正常退出" : "强制退出"
     let application = selection?.application
     let isAvailable = session.isConfirmationTargetAvailable
     let isForceQuit = selection?.action == .forceQuit
@@ -541,6 +588,63 @@ enum TerminalPickerRenderer {
     )
   }
 
+  private static func usesFullConfirmation(height: Int, width: Int) -> Bool {
+    height >= 8 && width >= 26
+  }
+
+  private static func compactConfirmationLayout(
+    session: PickerSession,
+    height: Int,
+    width: Int
+  ) -> CompactConfirmationLayout {
+    let selection = session.confirmationSelection
+    let actionName = selection?.action == .quit ? "正常退出" : "强制退出"
+    let name = TerminalText.sanitize(selection?.application.name ?? "未知应用")
+    let title = "\(actionName) · \(name)"
+    let buttons = compactConfirmationButtons(session: session, width: width)
+    let warning: String
+    if !session.isConfirmationTargetAvailable {
+      warning = "目标已退出 · 不会发送请求"
+    } else if selection?.action == .forceQuit, selection?.application.isFinder == true {
+      warning = "Finder 将由 macOS 自动重新打开"
+    } else if selection?.action == .forceQuit {
+      warning = "未保存的内容可能会丢失"
+    } else {
+      warning = "应用可以拒绝或显示保存提示"
+    }
+
+    if height <= 1 {
+      return CompactConfirmationLayout(
+        lines: [buttons],
+        buttons: buttons,
+        buttonRow: 1
+      )
+    }
+    return CompactConfirmationLayout(
+      lines: [title, buttons, warning],
+      buttons: buttons,
+      buttonRow: 2
+    )
+  }
+
+  private static func compactConfirmationButtons(
+    session: PickerSession,
+    width: Int
+  ) -> String {
+    let fullButtons = confirmationButtons(session: session)
+    if TerminalText.displayWidth(fullButtons) <= width {
+      return fullButtons
+    }
+    guard session.isConfirmationTargetAvailable else {
+      return "▸返回◂"
+    }
+    if width >= 12 {
+      return session.confirmationChoice == .execute
+        ? "▸执行◂  取消" : "执行  ▸取消◂"
+    }
+    return session.confirmationChoice == .execute ? "▸执行◂" : "▸取消◂"
+  }
+
   private static func confirmationButtons(session: PickerSession) -> String {
     guard session.isConfirmationTargetAvailable else {
       return "▸ [ 返回 ] ◂"
@@ -557,39 +661,19 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
-    guard height >= 6, width >= 20 else {
+    guard usesFramedHelp(height: height, width: width) else {
+      let layout = compactHelpLayout(height: height)
       return compactOverlayLines(
-        compactHelpValues,
+        layout.lines,
         height: height,
         width: width,
         colorEnabled: colorEnabled
       )
     }
 
-    let defaultAction = session.defaultAction == .forceQuit ? "强制退出" : "正常退出"
-    let content: [(String, ContentStyle)] = [
-      ("导航", .accent),
-      ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
-      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
-      ("", .normal),
-      ("列表", .accent),
-      ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
-      ("u  暂停/继续实时应用列表", .normal),
-      ("", .normal),
-      ("筛选", .accent),
-      ("f 或 /  编辑 · ←/→/Home/End  移动光标", .normal),
-      ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原筛选与选择", .normal),
-      ("", .normal),
-      ("操作", .accent),
-      ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
-      ("动作面板默认选择取消；←/→/Tab 切换，Enter 执行所选。", .warning),
-      ("", .normal),
-      ("q 或 Esc  关闭 fq · Ctrl-C  随时取消", .normal),
-    ]
-
     return overlayFrame(
       title: "帮助",
-      content: content,
+      content: helpContent(session: session, height: height, width: width),
       footer: helpFooter,
       height: height,
       width: width,
@@ -597,20 +681,108 @@ enum TerminalPickerRenderer {
     )
   }
 
+  private static func usesFramedHelp(height: Int, width: Int) -> Bool {
+    height >= 6 && width >= 32
+  }
+
+  private static func helpContent(
+    session: PickerSession,
+    height: Int,
+    width: Int
+  ) -> [(String, ContentStyle)] {
+    let defaultAction = session.defaultAction == .forceQuit ? "强制退出" : "正常退出"
+    let full: [(String, ContentStyle)] = [
+      ("导航", .accent),
+      ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
+      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
+      ("列表", .accent),
+      ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
+      ("u  暂停/继续实时应用列表", .normal),
+      ("筛选", .accent),
+      ("f 或 /  编辑 · ←/→/Home/End  移动光标", .normal),
+      ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原筛选与选择", .normal),
+      ("操作", .accent),
+      ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
+      ("动作面板默认选择取消；←/→/Tab 切换，Enter 执行所选。", .warning),
+      ("q 或 Esc  关闭 fq · Ctrl-C  随时取消", .normal),
+    ]
+    let condensed: [(String, ContentStyle)] = [
+      ("导航  ↑/↓ 移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
+      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 可点击可见控件", .normal),
+      ("列表  ←/→ 切换排序 · r 反向 · u 暂停/继续", .normal),
+      ("筛选  f 或 / 编辑 · ←/→/Home/End 移动光标", .normal),
+      ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),
+      ("操作  Enter \(defaultAction) · t 正常退出 · k 强制退出", .normal),
+      ("确认默认选择取消；←/→/Tab 切换，Enter 执行。", .warning),
+      ("q 或 Esc 关闭 fq · Ctrl-C 随时取消", .normal),
+    ]
+    let terse: [(String, ContentStyle)] = [
+      ("↑↓/滚轮 选择 · ←→ 排序", .accent),
+      ("f/ 筛选 · u 暂停 · r 反向", .normal),
+      ("↵ \(defaultAction) · t 退出 · k 强退", .normal),
+      ("确认默认取消 · q/Esc 返回", .warning),
+    ]
+    let capacity = max(0, height - 2)
+    if width >= 88, capacity >= full.count {
+      return full
+    }
+    if width >= 58, capacity >= condensed.count {
+      return condensed
+    }
+    return terse
+  }
+
   private static let helpFooter = "? / q / esc  返回"
-  private static let compactHelpValues = ["fq 帮助", helpFooter]
+
+  private static func compactHelpLayout(height: Int) -> CompactHelpLayout {
+    let returnLabel = "q/Esc 返回"
+    if height <= 1 {
+      return CompactHelpLayout(
+        lines: [returnLabel],
+        returnLabel: returnLabel,
+        returnRow: 1
+      )
+    }
+    if height == 2 {
+      return CompactHelpLayout(
+        lines: ["fq 帮助", returnLabel],
+        returnLabel: returnLabel,
+        returnRow: 2
+      )
+    }
+    if height == 3 {
+      return CompactHelpLayout(
+        lines: ["fq 帮助", "↑↓ · f · ↵", returnLabel],
+        returnLabel: returnLabel,
+        returnRow: 3
+      )
+    }
+    return CompactHelpLayout(
+      lines: [
+        "fq 帮助",
+        "↑↓/滚轮 · ←→排序",
+        "f 筛选 · ↵ 动作",
+        returnLabel,
+      ],
+      returnLabel: returnLabel,
+      returnRow: 4
+    )
+  }
 
   private static func compactOverlayLines(
     _ content: [String],
     height: Int,
     width: Int,
-    colorEnabled: Bool
+    colorEnabled: Bool,
+    accentedRow: Int? = nil
   ) -> [String] {
     (0..<height).map { index in
       let value = content.indices.contains(index) ? content[index] : ""
+      let style: ContentStyle =
+        index == accentedRow ? .accent : (index == 0 ? .warning : .normal)
       return styled(
         TerminalText.centered(value, in: width),
-        as: index == 0 ? .warning : .normal,
+        as: style,
         colorEnabled: colorEnabled
       )
     }
