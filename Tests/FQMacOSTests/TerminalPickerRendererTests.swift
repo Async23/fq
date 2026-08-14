@@ -73,11 +73,12 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     let output = render(session, rows: 18, columns: 90)
 
-    XCTAssertTrue(output.contains("确认"))
+    XCTAssertTrue(output.contains("操作确认"))
+    XCTAssertTrue(output.contains("强制退出"))
     XCTAssertTrue(output.contains("Finder"))
     XCTAssertTrue(output.contains("由 macOS 自动重新打开"))
-    XCTAssertTrue(output.contains("Enter 不会确认"))
-    XCTAssertTrue(output.contains("y 确认 │ n/esc 返回"))
+    XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
+    XCTAssertTrue(output.contains("←→/tab 选择 │ Enter 执行所选"))
   }
 
   func testHelpViewDocumentsBtopStyleCommands() {
@@ -88,8 +89,32 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("导航"))
     XCTAssertTrue(output.contains("f 或 /"))
-    XCTAssertTrue(output.contains("t  正常退出 · k  强制退出"))
+    XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
+    XCTAssertTrue(output.contains("默认选择取消"))
     XCTAssertTrue(output.contains("q 或 Esc"))
+  }
+
+  func testNormalQuitShortcutOpensNonDestructiveActionPanel() {
+    var session = makeSession()
+    _ = session.handle(.text("t"))
+
+    let output = render(session, rows: 18, columns: 90)
+
+    XCTAssertTrue(output.contains("正常退出"))
+    XCTAssertTrue(output.contains("应用可以拒绝或显示保存提示"))
+    XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
+    XCTAssertFalse(output.contains("未保存的内容可能会丢失"))
+  }
+
+  func testBrowseTextShowsFilterHintInsteadOfChangingQuery() {
+    var session = makeSession()
+    _ = session.handle(.text("c"))
+
+    let output = render(session, rows: 16, columns: 90)
+
+    XCTAssertTrue(output.contains("提示  筛选请先按 f 或 /"))
+    XCTAssertTrue(output.contains("f / 筛选"))
+    XCTAssertEqual(session.state.query, "")
   }
 
   func testConfirmationDisablesActionWhenRefreshedTargetHasExited() {
@@ -105,8 +130,9 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("目标应用已经退出或不再可用"))
     XCTAssertTrue(output.contains("fq 不会发送退出请求"))
-    XCTAssertTrue(output.contains("按 Esc 返回实时应用列表"))
-    XCTAssertFalse(output.contains("y 确认 │"))
+    XCTAssertTrue(output.contains("▸ [ 返回 ] ◂"))
+    XCTAssertTrue(output.contains("Enter/Esc 返回"))
+    XCTAssertFalse(output.contains("[ 执行 ]"))
   }
 
   private func makeSession() -> PickerSession {

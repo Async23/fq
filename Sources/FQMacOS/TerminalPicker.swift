@@ -35,6 +35,7 @@ final class TerminalPicker: ApplicationPicking {
   private let outputFileDescriptor: Int32
   private let colorEnabled: Bool
   private let refreshInterval: TimeInterval
+  private var bufferedByte: UInt8?
 
   init(
     inputFileDescriptor: Int32 = STDIN_FILENO,
@@ -58,6 +59,7 @@ final class TerminalPicker: ApplicationPicking {
       throw TerminalPickerError.notATerminal
     }
 
+    bufferedByte = nil
     var original = termios()
     guard tcgetattr(inputFileDescriptor, &original) == 0 else {
       throw TerminalPickerError.terminalSetupFailed(errno)
@@ -136,7 +138,9 @@ final class TerminalPicker: ApplicationPicking {
       return .enter
     case 8, 127:
       return .backspace
-    case 9, 14:
+    case 9:
+      return .toggleChoice
+    case 14:
       return .move(1)
     case 12:
       return .redraw
@@ -160,6 +164,7 @@ final class TerminalPicker: ApplicationPicking {
       return .escape
     }
     guard second == 91 else {
+      bufferedByte = second
       return .escape
     }
     guard let third = try readByte() else {
@@ -171,10 +176,16 @@ final class TerminalPicker: ApplicationPicking {
       return .move(-1)
     case 66:
       return .move(1)
+    case 67:
+      return .toggleChoice
+    case 68:
+      return .toggleChoice
     case 72:
       return .first
     case 70:
       return .last
+    case 90:
+      return .toggleChoice
     case 49, 55:
       guard try readByte() == 126 else {
         return nil
@@ -229,6 +240,11 @@ final class TerminalPicker: ApplicationPicking {
   }
 
   private func readByte() throws -> UInt8? {
+    if let bufferedByte {
+      self.bufferedByte = nil
+      return bufferedByte
+    }
+
     var byte: UInt8 = 0
     while true {
       let count = Darwin.read(inputFileDescriptor, &byte, 1)

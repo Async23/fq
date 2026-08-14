@@ -10,21 +10,26 @@ final class PickerSessionTests: XCTestCase {
     pickerCandidate(pid: 33, name: "Charlie"),
   ]
 
-  func testDefaultForceActionRequiresExplicitYConfirmation() {
+  func testDefaultActionOpensCancelFocusedConfirmation() {
     var session = makeSession(defaultAction: .forceQuit)
+    let selection = ApplicationExitSelection(
+      application: applications[0],
+      action: .forceQuit
+    )
 
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(
       session.phase,
-      .confirming(
-        ApplicationExitSelection(application: applications[0], action: .forceQuit)
-      )
+      .confirming(PickerConfirmation(selection: selection, choice: .cancel))
     )
-    XCTAssertEqual(session.handle(.enter), .stay(redraw: false))
+    XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
 
+    _ = session.handle(.enter)
+    XCTAssertEqual(session.handle(.toggleChoice), .stay(redraw: true))
     XCTAssertEqual(
-      session.handle(.text("y")),
-      .select(ApplicationExitSelection(application: applications[0], action: .forceQuit))
+      session.handle(.enter),
+      .select(selection)
     )
   }
 
@@ -37,10 +42,37 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.state.selectedApplication, applications[0])
   }
 
+  func testOnlyHorizontalChoiceInputChangesConfirmationSelection() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.enter)
+
+    XCTAssertEqual(session.handle(.move(-1)), .stay(redraw: false))
+    XCTAssertEqual(session.confirmationChoice, .cancel)
+
+    _ = session.handle(.toggleChoice)
+    XCTAssertEqual(session.confirmationChoice, .execute)
+
+    _ = session.handle(.toggleChoice)
+    XCTAssertEqual(session.confirmationChoice, .cancel)
+  }
+
   func testActionShortcutsFollowBtopTerminateAndKillKeys() {
     var terminateSession = makeSession(defaultAction: .forceQuit)
     XCTAssertEqual(
       terminateSession.handle(.text("t")),
+      .stay(redraw: true)
+    )
+    XCTAssertEqual(
+      terminateSession.phase,
+      .confirming(
+        PickerConfirmation(
+          selection: ApplicationExitSelection(application: applications[0], action: .quit)
+        )
+      )
+    )
+    _ = terminateSession.handle(.toggleChoice)
+    XCTAssertEqual(
+      terminateSession.handle(.enter),
       .select(ApplicationExitSelection(application: applications[0], action: .quit))
     )
 
@@ -49,9 +81,34 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(
       killSession.phase,
       .confirming(
-        ApplicationExitSelection(application: applications[0], action: .forceQuit)
+        PickerConfirmation(
+          selection: ApplicationExitSelection(
+            application: applications[0],
+            action: .forceQuit
+          )
+        )
       )
     )
+  }
+
+  func testPastedApplicationNameCannotAccidentallyExecuteAnAction() {
+    for pastedText in ["typora", "keynote"] {
+      var session = makeSession(defaultAction: .forceQuit)
+      let decisions = pastedText.map { character in
+        session.handle(.text(String(character)))
+      }
+
+      XCTAssertFalse(
+        decisions.contains(where: { decision in
+          if case .select = decision {
+            return true
+          }
+          return false
+        })
+      )
+      XCTAssertEqual(session.confirmationChoice, .cancel)
+      XCTAssertEqual(session.state.query, "")
+    }
   }
 
   func testFilterEditingAppliesLiveAndEscapeRestoresPreviousQuery() {
@@ -73,15 +130,21 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.state.query, "a")
   }
 
-  func testDirectTypingStartsFilteringAndEnterAppliesIt() {
+  func testBrowseTextDoesNotStartFilteringAndShowsHowToFilter() {
     var session = makeSession(defaultAction: .forceQuit)
 
+    _ = session.handle(.text("b"))
+
+    XCTAssertEqual(session.phase, .browse)
+    XCTAssertEqual(session.state.query, "")
+    XCTAssertEqual(session.statusMessage, "筛选请先按 f 或 /")
+
+    _ = session.handle(.text("/"))
     _ = session.handle(.text("b"))
     _ = session.handle(.text("r"))
 
     XCTAssertEqual(session.phase, .filtering(originalQuery: ""))
     XCTAssertEqual(session.state.query, "br")
-    XCTAssertEqual(session.state.selectedApplication?.name, "Bravo")
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
   }
@@ -122,13 +185,15 @@ final class PickerSessionTests: XCTestCase {
   func testConfirmationRemainsPinnedWhenTargetDisappearsDuringRefresh() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.enter)
+    _ = session.handle(.toggleChoice)
+    XCTAssertEqual(session.confirmationChoice, .execute)
 
     XCTAssertTrue(session.replaceApplications(Array(applications.dropFirst())))
     XCTAssertEqual(session.confirmationSelection?.application, applications[0])
     XCTAssertFalse(session.isConfirmationTargetAvailable)
-    XCTAssertEqual(session.handle(.text("y")), .stay(redraw: false))
+    XCTAssertEqual(session.confirmationChoice, .cancel)
 
-    XCTAssertEqual(session.handle(.escape), .stay(redraw: true))
+    XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
     XCTAssertEqual(session.state.selectedApplication, applications[1])
   }

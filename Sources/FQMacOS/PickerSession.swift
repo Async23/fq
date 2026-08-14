@@ -5,10 +5,20 @@ struct ApplicationExitSelection: Equatable {
   let action: ApplicationExitAction
 }
 
+enum PickerConfirmationChoice: Equatable {
+  case execute
+  case cancel
+}
+
+struct PickerConfirmation: Equatable {
+  let selection: ApplicationExitSelection
+  var choice: PickerConfirmationChoice = .cancel
+}
+
 enum PickerPhase: Equatable {
   case browse
   case filtering(originalQuery: String)
-  case confirming(ApplicationExitSelection)
+  case confirming(PickerConfirmation)
   case help
 }
 
@@ -17,6 +27,7 @@ enum PickerEvent: Equatable {
   case escape
   case interrupt
   case move(Int)
+  case toggleChoice
   case first
   case last
   case backspace
@@ -35,6 +46,7 @@ struct PickerSession {
   private(set) var state: PickerState
   let defaultAction: ApplicationExitAction
   private(set) var phase: PickerPhase = .browse
+  private(set) var statusMessage: String?
 
   init(
     applications: [ApplicationCandidate],
@@ -46,10 +58,17 @@ struct PickerSession {
   }
 
   var confirmationSelection: ApplicationExitSelection? {
-    guard case .confirming(let selection) = phase else {
+    guard case .confirming(let confirmation) = phase else {
       return nil
     }
-    return selection
+    return confirmation.selection
+  }
+
+  var confirmationChoice: PickerConfirmationChoice? {
+    guard case .confirming(let confirmation) = phase else {
+      return nil
+    }
+    return confirmation.choice
   }
 
   var isConfirmationTargetAvailable: Bool {
@@ -66,17 +85,22 @@ struct PickerSession {
     }
 
     state.replaceApplications(applications)
-    if case .confirming(let selection) = phase,
+    if case .confirming(var confirmation) = phase,
       let refreshedApplication = applications.first(where: {
-        $0.id == selection.application.id
+        $0.id == confirmation.selection.application.id
       })
     {
-      phase = .confirming(
-        ApplicationExitSelection(
+      confirmation = PickerConfirmation(
+        selection: ApplicationExitSelection(
           application: refreshedApplication,
-          action: selection.action
-        )
+          action: confirmation.selection.action
+        ),
+        choice: confirmation.choice
       )
+      phase = .confirming(confirmation)
+    } else if case .confirming(var confirmation) = phase {
+      confirmation.choice = .cancel
+      phase = .confirming(confirmation)
     }
     return true
   }
@@ -88,14 +112,15 @@ struct PickerSession {
     if case .redraw = event {
       return .stay(redraw: true)
     }
+    statusMessage = nil
 
     switch phase {
     case .browse:
       return handleBrowse(event)
     case .filtering(let originalQuery):
       return handleFiltering(event, originalQuery: originalQuery)
-    case .confirming(let selection):
-      return handleConfirmation(event, selection: selection)
+    case .confirming(let confirmation):
+      return handleConfirmation(event, confirmation: confirmation)
     case .help:
       return handleHelp(event)
     }
@@ -109,6 +134,8 @@ struct PickerSession {
       return .cancel
     case .move(let offset):
       state.moveSelection(by: offset)
+    case .toggleChoice:
+      return .stay(redraw: false)
     case .first:
       state.moveToFirst()
     case .last:
@@ -137,8 +164,7 @@ struct PickerSession {
       case "k":
         return requestExit(.forceQuit)
       default:
-        beginFiltering()
-        state.appendToQuery(text)
+        statusMessage = "筛选请先按 f 或 /"
       }
     case .interrupt, .redraw:
       return .stay(redraw: false)
@@ -154,6 +180,8 @@ struct PickerSession {
     switch event {
     case .enter, .move:
       phase = .browse
+    case .toggleChoice:
+      return .stay(redraw: false)
     case .escape:
       state.replaceQuery(originalQuery)
       phase = .browse
@@ -178,14 +206,25 @@ struct PickerSession {
 
   private mutating func handleConfirmation(
     _ event: PickerEvent,
-    selection: ApplicationExitSelection
+    confirmation: PickerConfirmation
   ) -> PickerDecision {
     switch event {
-    case .text(let text) where text.lowercased() == "y":
+    case .enter:
+      guard confirmation.choice == .execute, isConfirmationTargetAvailable else {
+        phase = .browse
+        return .stay(redraw: true)
+      }
+      return .select(confirmation.selection)
+    case .toggleChoice:
       guard isConfirmationTargetAvailable else {
         return .stay(redraw: false)
       }
-      return .select(selection)
+      var updated = confirmation
+      updated.choice = confirmation.choice == .cancel ? .execute : .cancel
+      phase = .confirming(updated)
+      return .stay(redraw: true)
+    case .move:
+      return .stay(redraw: false)
     case .escape, .text("n"), .text("N"), .text("q"):
       phase = .browse
       return .stay(redraw: true)
@@ -214,11 +253,7 @@ struct PickerSession {
     }
 
     let selection = ApplicationExitSelection(application: application, action: action)
-    if action == .forceQuit {
-      phase = .confirming(selection)
-      return .stay(redraw: true)
-    }
-
-    return .select(selection)
+    phase = .confirming(PickerConfirmation(selection: selection))
+    return .stay(redraw: true)
   }
 }

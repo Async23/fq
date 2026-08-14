@@ -34,7 +34,7 @@ final class FQCommandTests: XCTestCase {
     XCTAssertTrue(console.standardOutput.contains("正常退出请求"))
   }
 
-  func testNormalQuitUsesPickerSelectionWithoutForceConfirmation() {
+  func testNormalQuitUsesPickerConfirmedSelection() {
     let selected = candidate(pid: 42, name: "Preview")
     let manager = FakeApplicationManager(applications: [selected], outcome: .requested)
     let console = FakeConsole()

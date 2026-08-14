@@ -155,50 +155,65 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
+    let selection = session.confirmationSelection
+    let actionName = selection?.action == .quit ? "正常退出" : "强制退出"
     guard height >= 6, width >= 20 else {
       let name =
-        session.confirmationSelection.map {
+        selection.map {
           TerminalText.sanitize($0.application.name)
         } ?? "-"
-      let action = session.isConfirmationTargetAvailable ? "y 确认 · esc 返回" : "目标已退出 · esc 返回"
+      let action =
+        session.isConfirmationTargetAvailable
+        ? "←→ 选择 · ↵ 执行" : "目标已退出 · ↵ 返回"
       return compactOverlayLines(
-        ["确认强制退出", name, action],
+        ["确认\(actionName)", name, action],
         height: height,
         width: width,
         colorEnabled: colorEnabled
       )
     }
 
-    let application = session.confirmationSelection?.application
+    let application = selection?.application
     let isAvailable = session.isConfirmationTargetAvailable
-    let name = TerminalText.sanitize(application?.name ?? "Unknown application")
+    let isForceQuit = selection?.action == .forceQuit
+    let name = TerminalText.sanitize(application?.name ?? "未知应用")
     let identity =
       application.map { "PID \($0.processIdentifier) · \($0.bundleIdentifier ?? "无 Bundle ID")" }
       ?? "应用已不可用"
     let warning: String
     if !isAvailable {
       warning = "目标应用已经退出或不再可用；fq 不会发送退出请求。"
-    } else if application?.isFinder == true {
+    } else if isForceQuit, application?.isFinder == true {
       warning = "Finder 会被强制退出，并由 macOS 自动重新打开。"
-    } else {
+    } else if isForceQuit {
       warning = "此应用中未保存的内容可能会丢失。"
+    } else {
+      warning = "fq 会请求应用正常退出；应用可以拒绝或显示保存提示。"
     }
+    let buttons: String
+    if !isAvailable {
+      buttons = "▸ [ 返回 ] ◂"
+    } else if session.confirmationChoice == .execute {
+      buttons = "▸ [ 执行 ] ◂    [ 取消 ]"
+    } else {
+      buttons = "[ 执行 ]    ▸ [ 取消 ] ◂"
+    }
+    let warningStyle: ContentStyle = !isAvailable || isForceQuit ? .warning : .normal
     let content = [
-      ("强制退出", ContentStyle.warning),
+      (actionName, isForceQuit ? ContentStyle.warning : ContentStyle.accent),
       (name, ContentStyle.accent),
       (identity, ContentStyle.normal),
       ("", ContentStyle.normal),
-      (warning, ContentStyle.warning),
-      (
-        isAvailable ? "按 y 确认；Enter 不会确认破坏性操作。" : "按 Esc 返回实时应用列表。",
-        ContentStyle.normal
-      ),
+      (warning, warningStyle),
+      (buttons, ContentStyle.accent),
     ]
 
     return overlayFrame(
-      title: "确认",
+      title: "操作确认",
       content: content,
-      footer: isAvailable ? "y 确认 │ n/esc 返回 │ ctrl-c 取消" : "n/esc 返回 │ ctrl-c 取消",
+      footer: isAvailable
+        ? "←→/tab 选择 │ Enter 执行所选 │ Esc 返回"
+        : "Enter/Esc 返回 │ ctrl-c 取消",
       height: height,
       width: width,
       colorEnabled: colorEnabled
@@ -218,11 +233,10 @@ enum TerminalPickerRenderer {
       ("", .normal),
       ("筛选", .accent),
       ("f 或 /  编辑 · Delete/Ctrl-U  清除 · Enter  应用 · Esc  还原", .normal),
-      ("直接输入任意非命令字符也会开始筛选。", .normal),
       ("", .normal),
       ("操作", .accent),
-      ("Enter  \(defaultAction) · t  正常退出 · k  强制退出", .normal),
-      ("强制退出始终需要在 fq 内输入 y 确认。", .warning),
+      ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
+      ("动作面板默认选择取消；←/→/Tab 切换，Enter 执行所选。", .warning),
       ("", .normal),
       ("q 或 Esc  关闭 fq · Ctrl-C  随时取消", .normal),
     ]
@@ -346,8 +360,8 @@ enum TerminalPickerRenderer {
     } else {
       let enterAction = session.defaultAction == .forceQuit ? "强退" : "退出"
       actions = [
-        "─ ↑↓ 选择 │ ↵ \(enterAction) │ t 退出 │ k 强退 │ f 筛选 │ ? 帮助 │ q 关闭 ",
-        "─ ↑↓ │ ↵ \(enterAction) │ t 退出 │ k 强退 │ ? │ q ",
+        "─ ↑↓ 选择 │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ f 筛选 │ ? 帮助 │ q 关闭 ",
+        "─ ↑↓ │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ ? │ q ",
         "─ ↑↓ │ ↵ \(enterAction) │ t/k │ q ",
         "─ ↑↓ │ ↵ │ q ",
         "─ ",
@@ -374,7 +388,10 @@ enum TerminalPickerRenderer {
     let left: String
     let right: String
 
-    if case .filtering = session.phase {
+    if let message = session.statusMessage {
+      left = " 提示  \(message)"
+      right = "f / 筛选"
+    } else if case .filtering = session.phase {
       left = " 筛选› \(query)█"
       right = "↵ 应用 · esc 还原"
     } else if query.isEmpty {
