@@ -176,7 +176,7 @@ public final class FQCommand {
       Enter                   打开当前模式的动作面板
       t / k                   打开正常退出 / 强制退出动作
       Ctrl-U；浏览中 Delete    清空筛选
-      鼠标                     滚轮浏览；列表、标题栏和底栏控件可点
+      鼠标                     滚轮/滚动条浏览；列表和可见控件可点
       ?                       查看选择器内帮助
       q / Esc / Ctrl-C        取消
 

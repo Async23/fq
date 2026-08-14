@@ -123,6 +123,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("导航"))
     XCTAssertTrue(output.contains("鼠标滚轮浏览 · 单击选择 · 再点打开动作"))
     XCTAssertTrue(output.contains("标题/底栏控件可点"))
+    XCTAssertTrue(output.contains("点击滚动轨迹跳转"))
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
     XCTAssertTrue(output.contains("u  暂停/继续实时应用列表"))
     XCTAssertTrue(output.contains("f 或 /"))
@@ -205,6 +206,119 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: 1,
         row: 4
       )
+    )
+  }
+
+  func testLongListRendersBtopStyleScrollbarAtViewportExtremes() {
+    let manyApplications = (1...20).map { index in
+      rendererCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: manyApplications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+
+    var lines = renderedLines(render(session, rows: 10, columns: 90))
+    XCTAssertTrue(lines[2].hasSuffix("↑│"))
+    XCTAssertTrue(lines[3].hasSuffix("█│"))
+    XCTAssertTrue(lines[8].hasSuffix("↓│"))
+    XCTAssertTrue(lines.allSatisfy { TerminalText.displayWidth($0) == 89 })
+
+    _ = session.handle(.last)
+    lines = renderedLines(render(session, rows: 10, columns: 90))
+    XCTAssertTrue(lines[2].hasSuffix("↑│"))
+    XCTAssertTrue(lines[7].hasSuffix("█│"))
+    XCTAssertTrue(lines[8].hasSuffix("↓│"))
+    XCTAssertTrue(lines.allSatisfy { TerminalText.displayWidth($0) == 89 })
+  }
+
+  func testScrollbarMouseTargetsNavigateWithoutBecomingApplicationClicks() {
+    let manyApplications = (1...20).map { index in
+      rendererCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: manyApplications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    let dimensions = TerminalDimensions(rows: 10, columns: 90)
+    let scrollbarColumn = dimensions.columns - 2
+
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: scrollbarColumn,
+        row: 3
+      ),
+      .command(.move(-6))
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: scrollbarColumn,
+        row: 9
+      ),
+      .command(.move(6))
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: scrollbarColumn,
+        row: 4
+      ),
+      .command(.move(0))
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: scrollbarColumn,
+        row: 8
+      ),
+      .command(.move(19))
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: scrollbarColumn - 1,
+        row: 4
+      ),
+      .application(0)
+    )
+
+    _ = session.handle(.last)
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: scrollbarColumn,
+        row: 8
+      ),
+      .command(.move(0))
+    )
+  }
+
+  func testFittingListDoesNotReserveAScrollbarColumn() {
+    let session = makeSession()
+    let dimensions = TerminalDimensions(rows: 10, columns: 90)
+    let lines = renderedLines(
+      render(session, rows: dimensions.rows, columns: dimensions.columns)
+    )
+
+    XCTAssertFalse(lines[2].hasSuffix("↑│"))
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: dimensions,
+        column: dimensions.columns - 2,
+        row: 4
+      ),
+      .application(0)
     )
   }
 

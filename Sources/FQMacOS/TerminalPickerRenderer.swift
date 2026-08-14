@@ -26,6 +26,19 @@ enum TerminalPickerRenderer {
     let returnRow: Int?
   }
 
+  private struct ListScrollbarLayout {
+    let listRows: Int
+    let trackCount: Int
+    let thumbOffset: Int
+
+    func cell(forListOffset offset: Int) -> String {
+      if offset == listRows - 1 {
+        return "↓"
+      }
+      return offset == thumbOffset ? "█" : " "
+    }
+  }
+
   static func render(
     session: PickerSession,
     dimensions: TerminalDimensions,
@@ -154,6 +167,16 @@ enum TerminalPickerRenderer {
       return nil
     }
 
+    if let target = scrollbarMouseTarget(
+      session: session,
+      height: height,
+      width: width,
+      column: column,
+      row: row
+    ) {
+      return target
+    }
+
     if row == height {
       let line = bottomBorder(session: session, width: width)
       let enterAction = session.defaultAction == .forceQuit ? "强退" : "退出"
@@ -184,6 +207,42 @@ enum TerminalPickerRenderer {
       column: column,
       row: row
     )
+  }
+
+  private static func scrollbarMouseTarget(
+    session: PickerSession,
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    guard column == width - 1,
+      let scrollbar = listScrollbarLayout(session: session, height: height)
+    else {
+      return nil
+    }
+
+    if row == 3 {
+      return .command(.move(-scrollbar.listRows))
+    }
+    if row == height - 1 {
+      return .command(.move(scrollbar.listRows))
+    }
+
+    let trackOffset = row - 4
+    guard (0..<scrollbar.trackCount).contains(trackOffset) else {
+      return nil
+    }
+    if trackOffset == scrollbar.thumbOffset || scrollbar.trackCount == 1 {
+      return .command(.move(0))
+    }
+
+    let visible = session.state.visibleApplications
+    let targetIndex = Int(
+      (Double(trackOffset) * Double(visible.count - 1) / Double(scrollbar.trackCount - 1))
+        .rounded()
+    )
+    return .command(.move(targetIndex - session.state.selectedIndex))
   }
 
   private static func compactBrowseMouseTarget(
@@ -418,6 +477,30 @@ enum TerminalPickerRenderer {
     return startIndex..<endIndex
   }
 
+  private static func listScrollbarLayout(
+    session: PickerSession,
+    height: Int
+  ) -> ListScrollbarLayout? {
+    let visibleCount = session.state.visibleApplications.count
+    let listRows = max(0, height - 4)
+    guard listRows >= 2, visibleCount > listRows else {
+      return nil
+    }
+
+    let startIndex = visibleApplicationRange(session: session, height: height).lowerBound
+    let maxStartIndex = visibleCount - listRows
+    let trackCount = listRows - 1
+    let maxThumbOffset = max(0, trackCount - 1)
+    let thumbOffset = Int(
+      (Double(startIndex) * Double(maxThumbOffset) / Double(maxStartIndex)).rounded()
+    )
+    return ListScrollbarLayout(
+      listRows: listRows,
+      trackCount: trackCount,
+      thumbOffset: thumbOffset
+    )
+  }
+
   private static func pickerLines(
     session: PickerSession,
     height: Int,
@@ -432,6 +515,8 @@ enum TerminalPickerRenderer {
     let visible = session.state.visibleApplications
     let selectedIndex = min(session.state.selectedIndex, max(0, visible.count - 1))
     let visibleRange = visibleApplicationRange(session: session, height: height)
+    let scrollbar = listScrollbarLayout(session: session, height: height)
+    let scrollbarWidth = scrollbar == nil ? 0 : 1
 
     var lines = [
       styled(
@@ -446,7 +531,11 @@ enum TerminalPickerRenderer {
         colorEnabled: colorEnabled
       ),
       framed(
-        tableLine(application: nil, selected: false, innerWidth: width - 2),
+        tableLine(
+          application: nil,
+          selected: false,
+          innerWidth: width - 2 - scrollbarWidth
+        ) + (scrollbar == nil ? "" : "↑"),
         width: width,
         contentStyle: .bold,
         colorEnabled: colorEnabled
@@ -465,14 +554,15 @@ enum TerminalPickerRenderer {
         )
       )
     } else if !visibleRange.isEmpty {
-      for index in visibleRange {
+      for (offset, index) in visibleRange.enumerated() {
+        let scrollbarCell = scrollbar?.cell(forListOffset: offset) ?? ""
         lines.append(
           framed(
             tableLine(
               application: visible[index],
               selected: index == selectedIndex,
-              innerWidth: width - 2
-            ),
+              innerWidth: width - 2 - TerminalText.displayWidth(scrollbarCell)
+            ) + scrollbarCell,
             width: width,
             contentStyle: index == selectedIndex ? .selected : .normal,
             colorEnabled: colorEnabled
@@ -695,6 +785,7 @@ enum TerminalPickerRenderer {
       ("导航", .accent),
       ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
       ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
+      ("长列表右侧 ↑/↓ 翻页 · 点击滚动轨迹跳转", .normal),
       ("列表", .accent),
       ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
       ("u  暂停/继续实时应用列表", .normal),
@@ -708,7 +799,7 @@ enum TerminalPickerRenderer {
     ]
     let condensed: [(String, ContentStyle)] = [
       ("导航  ↑/↓ 移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
-      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 可点击可见控件", .normal),
+      ("鼠标滚轮/滚动条浏览 · 单击选择 · 再点打开动作", .normal),
       ("列表  ←/→ 切换排序 · r 反向 · u 暂停/继续", .normal),
       ("筛选  f 或 / 编辑 · ←/→/Home/End 移动光标", .normal),
       ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),
