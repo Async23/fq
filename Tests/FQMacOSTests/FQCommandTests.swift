@@ -6,47 +6,46 @@ import XCTest
 
 @MainActor
 final class FQCommandTests: XCTestCase {
-  func testDefaultModeConfirmsThenForceQuitsSelectedApplication() {
+  func testDefaultModeForceQuitsPickerConfirmedApplication() {
     let selected = candidate(pid: 42, name: "Preview")
     let manager = FakeApplicationManager(applications: [selected])
     let picker = FakePicker(selection: selected)
-    let console = FakeConsole(responses: ["y"])
+    let console = FakeConsole()
     let command = FQCommand(applicationManager: manager, picker: picker, console: console)
 
     XCTAssertEqual(command.run(arguments: []), 0)
     XCTAssertEqual(manager.requests, [ExitRequest(application: selected, action: .forceQuit)])
-    XCTAssertEqual(console.prompts.count, 1)
+    XCTAssertEqual(picker.receivedActions, [.forceQuit])
     XCTAssertTrue(console.standardOutput.contains("已强制退出"))
   }
 
-  func testForceQuitDefaultsToNoWhenConfirmationIsEmpty() {
-    let selected = candidate(pid: 42, name: "Preview")
-    let manager = FakeApplicationManager(applications: [selected])
-    let console = FakeConsole(responses: [""])
-    let command = FQCommand(
-      applicationManager: manager,
-      picker: FakePicker(selection: selected),
-      console: console
-    )
-
-    XCTAssertEqual(command.run(arguments: []), 0)
-    XCTAssertTrue(manager.requests.isEmpty)
-    XCTAssertEqual(console.standardOutput, "已取消。\n")
-  }
-
-  func testNormalQuitDoesNotAskForConfirmation() {
+  func testPickerShortcutCanOverrideDefaultForceActionWithNormalQuit() {
     let selected = candidate(pid: 42, name: "Preview")
     let manager = FakeApplicationManager(applications: [selected], outcome: .requested)
     let console = FakeConsole()
     let command = FQCommand(
       applicationManager: manager,
-      picker: FakePicker(selection: selected),
+      picker: FakePicker(selection: selected, selectedAction: .quit),
+      console: console
+    )
+
+    XCTAssertEqual(command.run(arguments: []), 0)
+    XCTAssertEqual(manager.requests.first?.action, .quit)
+    XCTAssertTrue(console.standardOutput.contains("正常退出请求"))
+  }
+
+  func testNormalQuitUsesPickerSelectionWithoutForceConfirmation() {
+    let selected = candidate(pid: 42, name: "Preview")
+    let manager = FakeApplicationManager(applications: [selected], outcome: .requested)
+    let console = FakeConsole()
+    let command = FQCommand(
+      applicationManager: manager,
+      picker: FakePicker(selection: selected, selectedAction: .quit),
       console: console
     )
 
     XCTAssertEqual(command.run(arguments: ["--quit"]), 0)
     XCTAssertEqual(manager.requests.first?.action, .quit)
-    XCTAssertTrue(console.prompts.isEmpty)
     XCTAssertTrue(console.standardOutput.contains("正常退出请求"))
   }
 
@@ -111,19 +110,6 @@ final class FQCommandTests: XCTestCase {
     XCTAssertEqual(command.run(arguments: []), 2)
     XCTAssertTrue(console.standardError.contains("fq --list"))
   }
-
-  func testFinderUsesRelaunchWarning() {
-    let finder = candidate(pid: 7, name: "Finder", bundleIdentifier: "com.apple.finder")
-    let console = FakeConsole(responses: ["no"])
-    let command = FQCommand(
-      applicationManager: FakeApplicationManager(applications: [finder]),
-      picker: FakePicker(selection: finder),
-      console: console
-    )
-
-    XCTAssertEqual(command.run(arguments: []), 0)
-    XCTAssertTrue(console.prompts.first?.contains("自动重新打开") == true)
-  }
 }
 
 @MainActor
@@ -155,19 +141,26 @@ private final class FakeApplicationManager: ApplicationManaging {
 
 @MainActor
 private final class FakePicker: ApplicationPicking {
-  let selection: ApplicationCandidate?
+  let selection: ApplicationExitSelection?
   var chooseCallCount = 0
+  var receivedActions: [ApplicationExitAction] = []
 
-  init(selection: ApplicationCandidate?) {
-    self.selection = selection
+  init(
+    selection: ApplicationCandidate?,
+    selectedAction: ApplicationExitAction = .forceQuit
+  ) {
+    self.selection = selection.map {
+      ApplicationExitSelection(application: $0, action: selectedAction)
+    }
   }
 
   func choose(
     from applications: [ApplicationCandidate],
     initialQuery: String,
     action: ApplicationExitAction
-  ) throws -> ApplicationCandidate? {
+  ) throws -> ApplicationExitSelection? {
     chooseCallCount += 1
+    receivedActions.append(action)
     return selection
   }
 }
@@ -175,19 +168,15 @@ private final class FakePicker: ApplicationPicking {
 private final class FakeConsole: Console {
   let isInputTerminal: Bool
   let isOutputTerminal: Bool
-  private var responses: [String]
   var standardOutput = ""
   var standardError = ""
-  var prompts: [String] = []
 
   init(
     isInputTerminal: Bool = true,
-    isOutputTerminal: Bool = true,
-    responses: [String] = []
+    isOutputTerminal: Bool = true
   ) {
     self.isInputTerminal = isInputTerminal
     self.isOutputTerminal = isOutputTerminal
-    self.responses = responses
   }
 
   func write(_ text: String) {
@@ -196,14 +185,6 @@ private final class FakeConsole: Console {
 
   func writeError(_ text: String) {
     standardError += text
-  }
-
-  func readLine(prompt: String) -> String? {
-    prompts.append(prompt)
-    guard !responses.isEmpty else {
-      return nil
-    }
-    return responses.removeFirst()
   }
 }
 

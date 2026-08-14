@@ -96,9 +96,9 @@ public final class FQCommand {
       return 1
     }
 
-    let selected: ApplicationCandidate?
+    let selection: ApplicationExitSelection?
     do {
-      selected = try picker.choose(
+      selection = try picker.choose(
         from: applications,
         initialQuery: query,
         action: action
@@ -108,38 +108,28 @@ public final class FQCommand {
       return 1
     }
 
-    guard let selected else {
-      console.write("已取消。\n")
-      return 0
-    }
-
-    if action == .forceQuit, !confirmForceQuit(selected) {
+    guard let selection else {
       console.write("已取消。\n")
       return 0
     }
 
     do {
-      let outcome = try applicationManager.requestExit(selected, action: action)
-      console.write(successMessage(for: selected, action: action, outcome: outcome) + "\n")
+      let outcome = try applicationManager.requestExit(
+        selection.application,
+        action: selection.action
+      )
+      console.write(
+        successMessage(
+          for: selection.application,
+          action: selection.action,
+          outcome: outcome
+        ) + "\n"
+      )
       return 0
     } catch {
       console.writeError("fq: \(TerminalText.sanitize(error.localizedDescription))\n")
       return 1
     }
-  }
-
-  private func confirmForceQuit(_ application: ApplicationCandidate) -> Bool {
-    let prompt: String
-    if application.isFinder {
-      prompt = "Finder 会被强制退出，并由 macOS 自动重新打开。确认？[y/N] "
-    } else {
-      prompt = "强制退出 “\(TerminalText.sanitize(application.name))”？未保存的内容会丢失。[y/N] "
-    }
-
-    let response = console.readLine(prompt: prompt)?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-    return response == "y" || response == "yes"
   }
 
   private func successMessage(
@@ -177,12 +167,15 @@ public final class FQCommand {
       -V, --version           显示版本
 
     选择器按键：
-      输入文字                模糊筛选名称、Bundle ID 或 PID
-      ↑ / ↓                   移动选择
-      Enter                   选择
-      Esc / Ctrl-C            取消
-      Ctrl-U                  清空搜索
+      ↑ / ↓，PgUp / PgDn      移动选择；Home / End 跳转
+      f 或 /                   进入筛选；也可直接输入非命令字符
+      Enter                   执行当前模式的动作
+      t / k                   正常退出 / 强制退出所选应用
+      Delete / Ctrl-U         清空筛选
+      ?                       查看选择器内帮助
+      q / Esc / Ctrl-C        取消
 
+    强制退出会在选择器内要求输入 y 确认；Enter 不会确认破坏性操作。
     fq 只显示 macOS 认定为普通 GUI 应用的进程，不显示守护进程和大多数菜单栏工具。
     """ + "\n"
 }

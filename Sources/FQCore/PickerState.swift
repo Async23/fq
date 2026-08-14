@@ -44,13 +44,18 @@ public struct PickerState: Equatable, Sendable {
     selectedIndex = 0
   }
 
+  public mutating func replaceQuery(_ newQuery: String) {
+    query = newQuery
+    selectedIndex = 0
+  }
+
   public mutating func moveSelection(by offset: Int) {
     let count = visibleApplications.count
     guard count > 0 else {
       selectedIndex = 0
       return
     }
-    selectedIndex = ((selectedIndex + offset) % count + count) % count
+    selectedIndex = min(max(selectedIndex + offset, 0), count - 1)
   }
 
   public mutating func moveToFirst() {

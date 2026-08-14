@@ -13,4 +13,17 @@ final class TerminalTextTests: XCTestCase {
       "Bad [31m Name "
     )
   }
+
+  func testDisplayWidthAccountsForWideCharacters() {
+    XCTAssertEqual(TerminalText.displayWidth("fq"), 2)
+    XCTAssertEqual(TerminalText.displayWidth("访达"), 4)
+    XCTAssertEqual(TerminalText.displayWidth("e\u{0301}"), 1)
+    XCTAssertEqual(TerminalText.displayWidth("👨‍💻"), 2)
+  }
+
+  func testClippingPaddingAndCenteringUseDisplayColumns() {
+    XCTAssertEqual(TerminalText.clipped("网易云音乐", to: 7), "网易云…")
+    XCTAssertEqual(TerminalText.displayWidth(TerminalText.padded("访达", to: 8)), 8)
+    XCTAssertEqual(TerminalText.centered("fq", in: 6), "  fq  ")
+  }
 }

@@ -7,7 +7,6 @@ protocol Console: AnyObject {
 
   func write(_ text: String)
   func writeError(_ text: String)
-  func readLine(prompt: String) -> String?
 }
 
 final class StandardConsole: Console {
@@ -25,10 +24,5 @@ final class StandardConsole: Console {
 
   func writeError(_ text: String) {
     FileHandle.standardError.write(Data(text.utf8))
-  }
-
-  func readLine(prompt: String) -> String? {
-    write(prompt)
-    return Swift.readLine()
   }
 }

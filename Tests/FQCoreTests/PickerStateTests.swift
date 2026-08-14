@@ -18,14 +18,17 @@ final class PickerStateTests: XCTestCase {
     XCTAssertEqual(state.selectedApplication?.name, "Bravo")
   }
 
-  func testSelectionWrapsInBothDirections() {
+  func testSelectionStopsAtListBoundaries() {
     var state = PickerState(applications: applications)
 
     state.moveSelection(by: -1)
+    XCTAssertEqual(state.selectedApplication?.name, "Alpha")
+
+    state.moveSelection(by: 99)
     XCTAssertEqual(state.selectedApplication?.name, "Charlie")
 
     state.moveSelection(by: 1)
-    XCTAssertEqual(state.selectedApplication?.name, "Alpha")
+    XCTAssertEqual(state.selectedApplication?.name, "Charlie")
   }
 
   func testDeletingAndClearingQueryResetSelection() {
@@ -38,6 +41,16 @@ final class PickerStateTests: XCTestCase {
 
     state.clearQuery()
     XCTAssertEqual(state.query, "")
+    XCTAssertEqual(state.selectedIndex, 0)
+  }
+
+  func testReplacingQuerySupportsRestoringAFilterEdit() {
+    var state = PickerState(applications: applications, initialQuery: "br")
+
+    state.replaceQuery("char")
+
+    XCTAssertEqual(state.query, "char")
+    XCTAssertEqual(state.selectedApplication?.name, "Charlie")
     XCTAssertEqual(state.selectedIndex, 0)
   }
 
