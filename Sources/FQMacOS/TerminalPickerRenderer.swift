@@ -578,7 +578,7 @@ enum TerminalPickerRenderer {
       ("", .normal),
       ("筛选", .accent),
       ("f 或 /  编辑 · ←/→/Home/End  移动光标", .normal),
-      ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原", .normal),
+      ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原筛选与选择", .normal),
       ("", .normal),
       ("操作", .accent),
       ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),

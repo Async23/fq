@@ -145,9 +145,19 @@ final class PickerSessionTests: XCTestCase {
       initialQuery: "a",
       defaultAction: .forceQuit
     )
+    _ = session.handle(.move(1))
 
     XCTAssertEqual(session.handle(.text("f")), .stay(redraw: true))
-    XCTAssertEqual(session.phase, .filtering(PickerFilterEdit(query: "a")))
+    XCTAssertEqual(
+      session.phase,
+      .filtering(
+        PickerFilterEdit(
+          query: "a",
+          selectedIdentity: applications[1].id,
+          selectedIndex: 1
+        )
+      )
+    )
 
     _ = session.handle(.text("q"))
     XCTAssertEqual(session.state.query, "aq")
@@ -156,6 +166,61 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.handle(.escape), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
     XCTAssertEqual(session.state.query, "a")
+    XCTAssertEqual(session.state.selectedApplication, applications[1])
+  }
+
+  func testCancellingUnchangedFilterKeepsTheCurrentApplicationSelected() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.last)
+
+    _ = session.handle(.text("f"))
+    XCTAssertEqual(session.handle(.escape), .stay(redraw: true))
+
+    XCTAssertEqual(session.phase, .browse)
+    XCTAssertEqual(session.state.query, "")
+    XCTAssertEqual(session.state.selectedApplication, applications[2])
+    XCTAssertEqual(session.state.selectedIndex, 2)
+  }
+
+  func testCancellingFilterRestoresIdentityAcrossRefreshAndFallsBackToOriginalRow() {
+    var reorderedSession = makeSession(defaultAction: .forceQuit)
+    _ = reorderedSession.handle(.move(1))
+    _ = reorderedSession.handle(.text("f"))
+    _ = reorderedSession.handle(.text("z"))
+    _ = reorderedSession.replaceApplications([
+      applications[2], applications[1], applications[0],
+    ])
+
+    _ = reorderedSession.handle(.escape)
+    XCTAssertEqual(reorderedSession.state.selectedApplication, applications[1])
+    XCTAssertEqual(reorderedSession.state.selectedIndex, 1)
+
+    var exitedSession = makeSession(defaultAction: .forceQuit)
+    _ = exitedSession.handle(.move(1))
+    _ = exitedSession.handle(.text("f"))
+    _ = exitedSession.handle(.text("z"))
+    _ = exitedSession.replaceApplications([applications[0], applications[2]])
+
+    _ = exitedSession.handle(.escape)
+    XCTAssertEqual(exitedSession.state.selectedApplication, applications[2])
+    XCTAssertEqual(exitedSession.state.selectedIndex, 1)
+  }
+
+  func testCancellingBrowseBackspaceRestoresItsQueryAndSelectionSnapshot() {
+    var session = PickerSession(
+      applications: applications,
+      initialQuery: "a",
+      defaultAction: .forceQuit
+    )
+    _ = session.handle(.last)
+
+    _ = session.handle(.backspace)
+    XCTAssertEqual(session.state.query, "")
+    XCTAssertNotNil(session.filterCursorOffset)
+
+    _ = session.handle(.escape)
+    XCTAssertEqual(session.state.query, "a")
+    XCTAssertEqual(session.state.selectedApplication, applications[2])
   }
 
   func testBrowseTextDoesNotStartFilteringAndShowsHowToFilter() {

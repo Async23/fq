@@ -17,10 +17,18 @@ struct PickerConfirmation: Equatable {
 
 struct PickerFilterEdit: Equatable {
   let originalQuery: String
+  let originalSelectionIdentity: ApplicationIdentity?
+  let originalSelectedIndex: Int
   private(set) var cursorOffset: Int
 
-  init(query: String) {
+  init(
+    query: String,
+    selectedIdentity: ApplicationIdentity? = nil,
+    selectedIndex: Int = 0
+  ) {
     originalQuery = query
+    originalSelectionIdentity = selectedIdentity
+    originalSelectedIndex = max(0, selectedIndex)
     cursorOffset = query.count
   }
 
@@ -253,7 +261,7 @@ struct PickerSession {
       guard !state.query.isEmpty else {
         return .stay(redraw: false)
       }
-      return handleFiltering(.backspace, edit: PickerFilterEdit(query: state.query))
+      return handleFiltering(.backspace, edit: filterEditSnapshot())
     case .deleteForward, .clear:
       guard !state.query.isEmpty else {
         return .stay(redraw: false)
@@ -304,7 +312,7 @@ struct PickerSession {
       }
       phase = .filtering(updatedEdit)
     case .escape:
-      state.replaceQuery(edit.originalQuery)
+      restoreFilterSnapshot(edit)
       phase = .browse
     case .first:
       guard updatedEdit.moveToStart() else {
@@ -392,7 +400,28 @@ struct PickerSession {
   }
 
   private mutating func beginFiltering() {
-    phase = .filtering(PickerFilterEdit(query: state.query))
+    phase = .filtering(filterEditSnapshot())
+  }
+
+  private func filterEditSnapshot() -> PickerFilterEdit {
+    PickerFilterEdit(
+      query: state.query,
+      selectedIdentity: state.selectedApplication?.id,
+      selectedIndex: state.selectedIndex
+    )
+  }
+
+  private mutating func restoreFilterSnapshot(_ edit: PickerFilterEdit) {
+    state.replaceQuery(edit.originalQuery)
+    let targetIndex: Int
+    if let identity = edit.originalSelectionIdentity,
+      let restoredIndex = state.visibleApplications.firstIndex(where: { $0.id == identity })
+    {
+      targetIndex = restoredIndex
+    } else {
+      targetIndex = edit.originalSelectedIndex
+    }
+    state.moveSelection(by: targetIndex - state.selectedIndex)
   }
 
   private mutating func togglePause() {
