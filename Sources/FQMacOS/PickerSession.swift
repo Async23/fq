@@ -48,6 +48,8 @@ struct PickerSession {
   let defaultAction: ApplicationExitAction
   private(set) var phase: PickerPhase = .browse
   private(set) var statusMessage: String?
+  private(set) var isPaused = false
+  private var latestApplications: [ApplicationCandidate]
 
   init(
     applications: [ApplicationCandidate],
@@ -56,6 +58,7 @@ struct PickerSession {
   ) {
     state = PickerState(applications: applications, initialQuery: initialQuery)
     self.defaultAction = defaultAction
+    latestApplications = applications
   }
 
   var confirmationSelection: ApplicationExitSelection? {
@@ -76,34 +79,48 @@ struct PickerSession {
     guard let selection = confirmationSelection else {
       return false
     }
-    return state.applications.contains(where: { $0.id == selection.application.id })
+    return latestApplications.contains(where: { $0.id == selection.application.id })
   }
 
   @discardableResult
   mutating func replaceApplications(_ applications: [ApplicationCandidate]) -> Bool {
-    guard applications != state.applications else {
-      return false
+    let targetWasAvailable = isConfirmationTargetAvailable
+    latestApplications = applications
+
+    var shouldRedraw = false
+    if !isPaused, applications != state.applications {
+      state.replaceApplications(applications)
+      shouldRedraw = true
     }
 
-    state.replaceApplications(applications)
-    if case .confirming(var confirmation) = phase,
+    if case .confirming(let confirmation) = phase,
       let refreshedApplication = applications.first(where: {
         $0.id == confirmation.selection.application.id
       })
     {
-      confirmation = PickerConfirmation(
+      let refreshedConfirmation = PickerConfirmation(
         selection: ApplicationExitSelection(
           application: refreshedApplication,
           action: confirmation.selection.action
         ),
         choice: confirmation.choice
       )
-      phase = .confirming(confirmation)
+      if refreshedConfirmation != confirmation {
+        phase = .confirming(refreshedConfirmation)
+        shouldRedraw = true
+      }
     } else if case .confirming(var confirmation) = phase {
-      confirmation.choice = .cancel
-      phase = .confirming(confirmation)
+      if confirmation.choice != .cancel {
+        confirmation.choice = .cancel
+        phase = .confirming(confirmation)
+        shouldRedraw = true
+      }
     }
-    return true
+
+    if targetWasAvailable != isConfirmationTargetAvailable {
+      shouldRedraw = true
+    }
+    return shouldRedraw
   }
 
   mutating func handle(_ event: PickerEvent) -> PickerDecision {
@@ -168,6 +185,8 @@ struct PickerSession {
         return requestExit(.forceQuit)
       case "r":
         state.toggleSortDirection()
+      case "u":
+        togglePause()
       default:
         statusMessage = "筛选请先按 f 或 /"
       }
@@ -252,13 +271,22 @@ struct PickerSession {
     phase = .filtering(originalQuery: state.query)
   }
 
+  private mutating func togglePause() {
+    isPaused.toggle()
+    if !isPaused, latestApplications != state.applications {
+      state.replaceApplications(latestApplications)
+    }
+  }
+
   private mutating func requestExit(_ action: ApplicationExitAction) -> PickerDecision {
     guard let application = state.selectedApplication else {
       statusMessage = state.query.isEmpty ? "没有可操作的应用" : "当前筛选没有匹配"
       return .stay(redraw: true)
     }
 
-    let selection = ApplicationExitSelection(application: application, action: action)
+    let latestApplication =
+      latestApplications.first(where: { $0.id == application.id }) ?? application
+    let selection = ApplicationExitSelection(application: latestApplication, action: action)
     phase = .confirming(PickerConfirmation(selection: selection))
     return .stay(redraw: true)
   }

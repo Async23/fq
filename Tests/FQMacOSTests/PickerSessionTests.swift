@@ -184,6 +184,42 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.state.selectedApplication?.name, "Bravo")
   }
 
+  func testPauseFreezesDisplayedApplicationsAndResumeAppliesLatestSnapshot() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.move(1))
+    let refreshedBravo = pickerCandidate(pid: 22, name: "Bravo", isActive: true)
+    let delta = pickerCandidate(pid: 44, name: "Delta")
+    let latestApplications = [applications[2], refreshedBravo, delta]
+
+    XCTAssertEqual(session.handle(.text("u")), .stay(redraw: true))
+    XCTAssertTrue(session.isPaused)
+    XCTAssertFalse(session.replaceApplications(latestApplications))
+    XCTAssertEqual(session.state.applications, applications)
+    XCTAssertEqual(session.state.selectedApplication, applications[1])
+
+    XCTAssertEqual(session.handle(.text("u")), .stay(redraw: true))
+    XCTAssertFalse(session.isPaused)
+    XCTAssertEqual(session.state.applications, latestApplications)
+    XCTAssertEqual(session.state.selectedApplication, refreshedBravo)
+  }
+
+  func testPausedConfirmationUsesLatestSnapshotToDisableMissingTarget() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.text("u"))
+    _ = session.handle(.enter)
+    _ = session.handle(.cycleFocus)
+
+    XCTAssertTrue(session.replaceApplications(Array(applications.dropFirst())))
+    XCTAssertTrue(session.isPaused)
+    XCTAssertEqual(session.state.applications, applications)
+    XCTAssertEqual(session.confirmationSelection?.application, applications[0])
+    XCTAssertFalse(session.isConfirmationTargetAvailable)
+    XCTAssertEqual(session.confirmationChoice, .cancel)
+
+    XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
+  }
+
   func testRefreshPreservesSelectionAndUpdatesCandidateMetadata() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.move(1))

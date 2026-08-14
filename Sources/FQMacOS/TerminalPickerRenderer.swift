@@ -68,7 +68,7 @@ enum TerminalPickerRenderer {
       framed(
         filterStatus(session: session, width: width - 2),
         width: width,
-        contentStyle: .normal,
+        contentStyle: session.isPaused ? .warning : .normal,
         colorEnabled: colorEnabled
       ),
       framed(
@@ -133,8 +133,9 @@ enum TerminalPickerRenderer {
     let application = session.state.selectedApplication
     let action = session.defaultAction == .forceQuit ? "强退" : "退出"
     let sort = sortLabel(session.state.sortOrder)
+    let refresh = session.isPaused ? "已暂停" : "实时"
     let values = [
-      "fq · \(action) · \(sort)",
+      "fq · \(action) · \(sort) · \(refresh)",
       application.map { "> \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)" }
         ?? "没有匹配",
       "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count) · ↑↓ · ↵ · q",
@@ -232,8 +233,9 @@ enum TerminalPickerRenderer {
       ("导航", .accent),
       ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
       ("", .normal),
-      ("排序", .accent),
+      ("列表", .accent),
       ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
+      ("u  暂停/继续实时应用列表", .normal),
       ("", .normal),
       ("筛选", .accent),
       ("f 或 /  编辑 · Delete/Ctrl-U  清除 · Enter  应用 · Esc  还原", .normal),
@@ -333,11 +335,15 @@ enum TerminalPickerRenderer {
     let action = session.defaultAction == .forceQuit ? "模式 强退" : "模式 退出"
     let sort = sortLabel(session.state.sortOrder)
     let reverse = session.state.isSortReversed ? "r 反向:开" : "r 反向:关"
+    let pauseAction = session.isPaused ? "u 继续" : "u 暂停"
+    let refresh = session.isPaused ? "已暂停" : "实时"
     let leading = width >= 10 ? "─ fq " : "─"
     let candidates = [
-      " f 筛选 │ \(reverse) │ ‹ \(sort) › │ 实时 │ \(action) ─",
-      " \(reverse) │ ‹ \(sort) › │ \(action) ─",
-      " ‹ \(sort) › │ \(action) ─",
+      " f 筛选 │ \(pauseAction) │ \(reverse) │ ‹ \(sort) › │ \(refresh) │ \(action) ─",
+      " \(pauseAction) │ \(reverse) │ ‹ \(sort) › │ \(refresh) │ \(action) ─",
+      " \(pauseAction) │ ‹ \(sort) › │ \(refresh) │ \(action) ─",
+      " \(pauseAction) │ \(refresh) │ \(action) ─",
+      " \(refresh) │ \(action) ─",
       " \(action) ─",
       "─",
     ]
@@ -407,22 +413,23 @@ enum TerminalPickerRenderer {
     let visibleCount = session.state.visibleApplications.count
     let query = TerminalText.sanitize(session.state.query)
     let left: String
-    let right: String
+    let baseRight: String
 
     if let message = session.statusMessage {
       left = " 提示  \(message)"
-      right = "f / 筛选"
+      baseRight = "f / 筛选"
     } else if case .filtering = session.phase {
       left = " 筛选› \(query)█"
-      right = "↵ 应用 · esc 还原"
+      baseRight = "↵ 应用 · esc 还原"
     } else if query.isEmpty {
       left = " 筛选  全部应用"
-      right = "\(visibleCount) 个应用"
+      baseRight = "\(visibleCount) 个应用"
     } else {
       left = " 筛选  \(query)"
-      right = "\(visibleCount) 个匹配 · del 清除"
+      baseRight = "\(visibleCount) 个匹配 · del 清除"
     }
 
+    let right = session.isPaused ? "已暂停 · \(baseRight)" : baseRight
     return fit(left: left, right: right, width: width)
   }
 

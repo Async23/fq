@@ -25,7 +25,9 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("┌─ fq"))
     XCTAssertFalse(output.contains("┌─ 1 fq"))
-    XCTAssertTrue(output.contains("f 筛选 │ r 反向:关 │ ‹ 智能 › │ 实时 │ 模式 强退"))
+    XCTAssertTrue(
+      output.contains("f 筛选 │ u 暂停 │ r 反向:关 │ ‹ 智能 › │ 实时 │ 模式 强退")
+    )
     XCTAssertTrue(output.contains("PID"))
     XCTAssertTrue(output.contains("应用"))
     XCTAssertTrue(output.contains("BUNDLE ID"))
@@ -90,6 +92,7 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("导航"))
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
+    XCTAssertTrue(output.contains("u  暂停/继续实时应用列表"))
     XCTAssertTrue(output.contains("f 或 /"))
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
@@ -131,6 +134,17 @@ final class TerminalPickerRendererTests: XCTestCase {
     output = render(session, rows: 16, columns: 90)
     XCTAssertTrue(output.contains("‹ 应用 ›"))
     XCTAssertTrue(output.contains("r 反向:开"))
+  }
+
+  func testPausedListMakesFrozenStateAndResumeActionVisible() {
+    var session = makeSession()
+    _ = session.handle(.text("u"))
+
+    let output = render(session, rows: 16, columns: 100)
+
+    XCTAssertTrue(output.contains("u 继续"))
+    XCTAssertTrue(output.contains("已暂停 │ 模式 强退"))
+    XCTAssertTrue(output.contains("已暂停 · 3 个应用"))
   }
 
   func testActionOnEmptyFilterExplainsWhyNothingOpened() {
