@@ -324,6 +324,8 @@ final class TerminalPicker: ApplicationPicking {
         return index == session.state.selectedIndex
           ? .enter
           : .move(index - session.state.selectedIndex)
+      case .command(let event):
+        return event
       case .confirmationExecute:
         return .chooseConfirmation(.execute)
       case .confirmationCancel:

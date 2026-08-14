@@ -122,6 +122,7 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("导航"))
     XCTAssertTrue(output.contains("鼠标滚轮浏览 · 单击选择 · 再点打开动作"))
+    XCTAssertTrue(output.contains("标题/底栏控件可点"))
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
     XCTAssertTrue(output.contains("u  暂停/继续实时应用列表"))
     XCTAssertTrue(output.contains("f 或 /"))
@@ -168,6 +169,139 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: 1,
         row: 4
       )
+    )
+  }
+
+  func testMouseHitTestingMapsVisibleBtopStyleControlsToKeyboardCommands() {
+    let session = makeSession()
+    let dimensions = TerminalDimensions(rows: 24, columns: 100)
+
+    XCTAssertEqual(
+      mouseTarget(at: "f 筛选", row: 1, session: session, dimensions: dimensions),
+      .command(.text("f"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "u 暂停", row: 1, session: session, dimensions: dimensions),
+      .command(.text("u"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "r 反向:关", row: 1, session: session, dimensions: dimensions),
+      .command(.text("r"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "‹ ", row: 1, session: session, dimensions: dimensions),
+      .command(.moveHorizontal(-1))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: " ›", row: 1, session: session, dimensions: dimensions),
+      .command(.moveHorizontal(1))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "筛选", row: 2, session: session, dimensions: dimensions),
+      .command(.text("f"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "↵ 强退…", row: 24, session: session, dimensions: dimensions),
+      .command(.enter)
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "t 退出…", row: 24, session: session, dimensions: dimensions),
+      .command(.text("t"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "k 强退…", row: 24, session: session, dimensions: dimensions),
+      .command(.text("k"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "f 筛选", row: 24, session: session, dimensions: dimensions),
+      .command(.text("f"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "? 帮助", row: 24, session: session, dimensions: dimensions),
+      .command(.text("?"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "q 关闭", row: 24, session: session, dimensions: dimensions),
+      .command(.text("q"))
+    )
+  }
+
+  func testMouseHitTestingMapsClearResumeAndCompactControlsOnlyWhenVisible() {
+    var filteredSession = PickerSession(
+      applications: applications,
+      initialQuery: "ghost",
+      defaultAction: .forceQuit
+    )
+    let dimensions = TerminalDimensions(rows: 16, columns: 90)
+    XCTAssertEqual(
+      mouseTarget(
+        at: "del 清除",
+        row: 2,
+        session: filteredSession,
+        dimensions: dimensions
+      ),
+      .command(.deleteForward)
+    )
+
+    _ = filteredSession.handle(.text("u"))
+    XCTAssertEqual(
+      mouseTarget(
+        at: "已暂停",
+        row: 2,
+        session: filteredSession,
+        dimensions: dimensions
+      ),
+      .command(.text("u"))
+    )
+
+    let compactDimensions = TerminalDimensions(rows: 4, columns: 40)
+    let compactSession = makeSession()
+    XCTAssertEqual(
+      mouseTarget(
+        at: "↵",
+        row: 3,
+        session: compactSession,
+        dimensions: compactDimensions
+      ),
+      .command(.enter)
+    )
+    XCTAssertEqual(
+      mouseTarget(
+        at: "q",
+        row: 3,
+        session: compactSession,
+        dimensions: compactDimensions
+      ),
+      .command(.text("q"))
+    )
+  }
+
+  func testHelpCanBeClosedByClickingItsFooterAtRegularAndTinySizes() {
+    var session = makeSession()
+    _ = session.handle(.text("?"))
+    let dimensions = TerminalDimensions(rows: 18, columns: 90)
+
+    XCTAssertEqual(
+      mouseTarget(
+        at: "? / q / esc  返回",
+        row: 18,
+        session: session,
+        dimensions: dimensions
+      ),
+      .command(.escape)
+    )
+
+    let tinyDimensions = TerminalDimensions(rows: 2, columns: 10)
+    let output = render(session, rows: tinyDimensions.rows, columns: tinyDimensions.columns)
+    XCTAssertEqual(renderedLines(output).count, 2)
+    XCTAssertEqual(
+      TerminalPickerRenderer.mouseTarget(
+        session: session,
+        dimensions: tinyDimensions,
+        column: 1,
+        row: 2
+      ),
+      .command(.escape)
     )
   }
 
@@ -324,6 +458,27 @@ final class TerminalPickerRendererTests: XCTestCase {
     let prefix = "\u{001B}[H\u{001B}[2J"
     return output.replacingOccurrences(of: prefix, with: "")
       .components(separatedBy: "\r\n")
+  }
+
+  private func mouseTarget(
+    at label: String,
+    row: Int,
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) -> PickerMouseTarget? {
+    let output = render(session, rows: dimensions.rows, columns: dimensions.columns)
+    let line = renderedLines(output)[row - 1]
+    guard let range = line.range(of: label) else {
+      XCTFail("Expected rendered row \(row) to contain \(label)")
+      return nil
+    }
+    let column = TerminalText.displayWidth(String(line[..<range.lowerBound])) + 1
+    return TerminalPickerRenderer.mouseTarget(
+      session: session,
+      dimensions: dimensions,
+      column: column,
+      row: row
+    )
   }
 }
 

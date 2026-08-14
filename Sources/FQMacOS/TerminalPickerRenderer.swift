@@ -8,6 +8,7 @@ struct TerminalDimensions: Equatable {
 
 enum PickerMouseTarget: Equatable {
   case application(Int)
+  case command(PickerEvent)
   case confirmationExecute
   case confirmationCancel
 }
@@ -62,7 +63,7 @@ enum TerminalPickerRenderer {
 
     switch session.phase {
     case .browse:
-      return applicationMouseTarget(
+      return browseMouseTarget(
         session: session,
         height: height,
         width: width,
@@ -77,9 +78,181 @@ enum TerminalPickerRenderer {
         column: column,
         row: row
       )
-    case .filtering, .help:
+    case .help:
+      return helpMouseTarget(
+        height: height,
+        width: width,
+        column: column,
+        row: row
+      )
+    case .filtering:
       return nil
     }
+  }
+
+  private static func browseMouseTarget(
+    session: PickerSession,
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    if height < 6 || width < 20 {
+      return compactBrowseMouseTarget(
+        session: session,
+        height: height,
+        width: width,
+        column: column,
+        row: row
+      )
+    }
+
+    if row == 1 {
+      let line = topBorder(session: session, width: width)
+      let pauseAction = session.isPaused ? "u 继续" : "u 暂停"
+      let reverse = session.state.isSortReversed ? "r 反向:开" : "r 反向:关"
+      return commandMouseTarget(
+        column: column,
+        line: line,
+        mappings: [
+          ("f 筛选", .text("f")),
+          (pauseAction, .text("u")),
+          (reverse, .text("r")),
+          ("‹ ", .moveHorizontal(-1)),
+          (" ›", .moveHorizontal(1)),
+        ]
+      )
+    }
+
+    if row == 2 {
+      let line = filterStatus(session: session, width: width - 2)
+      if !session.state.query.isEmpty,
+        contains(column: column, label: "del 清除", in: line, startingAt: 2)
+      {
+        return .command(.deleteForward)
+      }
+      if session.isPaused,
+        contains(column: column, label: "已暂停", in: line, startingAt: 2)
+      {
+        return .command(.text("u"))
+      }
+      if contains(column: column, label: "筛选", in: line, startingAt: 2) {
+        return .command(.text("f"))
+      }
+      return nil
+    }
+
+    if row == height {
+      let line = bottomBorder(session: session, width: width)
+      let enterAction = session.defaultAction == .forceQuit ? "强退" : "退出"
+      return commandMouseTarget(
+        column: column,
+        line: line,
+        mappings: [
+          ("↵ \(enterAction)…", .enter),
+          ("↵ \(enterAction)", .enter),
+          ("t 退出…", .text("t")),
+          ("k 强退…", .text("k")),
+          ("f 筛选", .text("f")),
+          ("? 帮助", .text("?")),
+          ("q 关闭", .text("q")),
+          ("↵", .enter),
+          ("t", .text("t")),
+          ("k", .text("k")),
+          ("?", .text("?")),
+          ("q", .text("q")),
+        ]
+      )
+    }
+
+    return applicationMouseTarget(
+      session: session,
+      height: height,
+      width: width,
+      column: column,
+      row: row
+    )
+  }
+
+  private static func compactBrowseMouseTarget(
+    session: PickerSession,
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    if row == 3, height >= 3 {
+      let line = TerminalText.padded(compactValues(session: session)[2], to: width)
+      return commandMouseTarget(
+        column: column,
+        line: line,
+        mappings: [
+          ("↵", .enter),
+          ("q", .text("q")),
+        ]
+      )
+    }
+    return applicationMouseTarget(
+      session: session,
+      height: height,
+      width: width,
+      column: column,
+      row: row
+    )
+  }
+
+  private static func helpMouseTarget(
+    height: Int,
+    width: Int,
+    column: Int,
+    row: Int
+  ) -> PickerMouseTarget? {
+    if height < 6 || width < 20 {
+      guard row == 2, height >= 2 else {
+        return nil
+      }
+      let line = TerminalText.padded(compactHelpValues[1], to: width)
+      guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
+        column <= TerminalText.displayWidth(TerminalText.clipped(compactHelpValues[1], to: width))
+      else {
+        return nil
+      }
+      return .command(.escape)
+    }
+
+    guard row == height else {
+      return nil
+    }
+    let line = horizontalBorder(
+      start: "└",
+      end: "┘",
+      leading: "─ \(helpFooter) ",
+      trailing: "─",
+      width: width
+    )
+    return commandMouseTarget(
+      column: column,
+      line: line,
+      mappings: [
+        (helpFooter, .escape),
+        ("返回", .escape),
+        ("esc", .escape),
+        ("q", .escape),
+        ("?", .escape),
+      ]
+    )
+  }
+
+  private static func commandMouseTarget(
+    column: Int,
+    line: String,
+    mappings: [(String, PickerEvent)]
+  ) -> PickerMouseTarget? {
+    for (label, event) in mappings
+    where contains(column: column, label: label, in: line, startingAt: 1) {
+      return .command(event)
+    }
+    return nil
   }
 
   private static func applicationMouseTarget(
@@ -166,13 +339,19 @@ enum TerminalPickerRenderer {
     in text: String,
     startingAt startColumn: Int
   ) -> Bool {
-    guard let range = text.range(of: label) else {
-      return false
+    var searchStart = text.startIndex
+    while searchStart < text.endIndex,
+      let range = text.range(of: label, range: searchStart..<text.endIndex)
+    {
+      let prefix = String(text[..<range.lowerBound])
+      let lowerBound = startColumn + TerminalText.displayWidth(prefix)
+      let upperBound = lowerBound + TerminalText.displayWidth(label) - 1
+      if (lowerBound...upperBound).contains(column) {
+        return true
+      }
+      searchStart = range.upperBound
     }
-    let prefix = String(text[..<range.lowerBound])
-    let lowerBound = startColumn + TerminalText.displayWidth(prefix)
-    let upperBound = lowerBound + TerminalText.displayWidth(label) - 1
-    return (lowerBound...upperBound).contains(column)
+    return false
   }
 
   private static func visibleApplicationRange(
@@ -272,17 +451,7 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
-    let visible = session.state.visibleApplications
-    let application = session.state.selectedApplication
-    let action = session.defaultAction == .forceQuit ? "强退" : "退出"
-    let sort = sortLabel(session.state.sortOrder)
-    let refresh = session.isPaused ? "已暂停" : "实时"
-    let values = [
-      "fq · \(action) · \(sort) · \(refresh)",
-      application.map { "> \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)" }
-        ?? "没有匹配",
-      "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count) · ↑↓ · ↵ · q",
-    ]
+    let values = compactValues(session: session)
 
     return (0..<height).map { index in
       let value = values.indices.contains(index) ? values[index] : ""
@@ -292,6 +461,20 @@ enum TerminalPickerRenderer {
         colorEnabled: colorEnabled
       )
     }
+  }
+
+  private static func compactValues(session: PickerSession) -> [String] {
+    let visible = session.state.visibleApplications
+    let application = session.state.selectedApplication
+    let action = session.defaultAction == .forceQuit ? "强退" : "退出"
+    let sort = sortLabel(session.state.sortOrder)
+    let refresh = session.isPaused ? "已暂停" : "实时"
+    return [
+      "fq · \(action) · \(sort) · \(refresh)",
+      application.map { "> \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)" }
+        ?? "没有匹配",
+      "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count) · ↑↓ · ↵ · q",
+    ]
   }
 
   private static func confirmationLines(
@@ -374,11 +557,20 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
+    guard height >= 6, width >= 20 else {
+      return compactOverlayLines(
+        compactHelpValues,
+        height: height,
+        width: width,
+        colorEnabled: colorEnabled
+      )
+    }
+
     let defaultAction = session.defaultAction == .forceQuit ? "强制退出" : "正常退出"
     let content: [(String, ContentStyle)] = [
       ("导航", .accent),
       ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
-      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 点击按钮确认", .normal),
+      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
       ("", .normal),
       ("列表", .accent),
       ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
@@ -398,12 +590,15 @@ enum TerminalPickerRenderer {
     return overlayFrame(
       title: "帮助",
       content: content,
-      footer: "? / q / esc  返回",
+      footer: helpFooter,
       height: height,
       width: width,
       colorEnabled: colorEnabled
     )
   }
+
+  private static let helpFooter = "? / q / esc  返回"
+  private static let compactHelpValues = ["fq 帮助", helpFooter]
 
   private static func compactOverlayLines(
     _ content: [String],
