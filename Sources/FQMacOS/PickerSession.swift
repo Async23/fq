@@ -112,6 +112,7 @@ enum PickerEvent: Equatable {
   case enter
   case escape
   case interrupt
+  case suspend
   case move(Int)
   case moveHorizontal(Int)
   case cycleFocus
@@ -129,6 +130,7 @@ enum PickerDecision: Equatable {
   case stay(redraw: Bool)
   case cancel
   case select(ApplicationExitSelection)
+  case suspend
 }
 
 struct PickerSession {
@@ -222,6 +224,9 @@ struct PickerSession {
     if case .interrupt = event {
       return .cancel
     }
+    if case .suspend = event {
+      return .suspend
+    }
     if case .redraw = event {
       return .stay(redraw: true)
     }
@@ -273,7 +278,7 @@ struct PickerSession {
         return .cancel
       case "f", "/":
         beginFiltering()
-      case "?":
+      case "?", "h":
         phase = .help
       case "t":
         return requestExit(.quit)
@@ -286,7 +291,7 @@ struct PickerSession {
       default:
         statusMessage = "筛选请先按 f 或 /"
       }
-    case .interrupt, .redraw:
+    case .interrupt, .suspend, .redraw:
       return .stay(redraw: false)
     }
 
@@ -345,7 +350,7 @@ struct PickerSession {
     case .text(let text):
       state.replaceQuery(updatedEdit.inserting(text, into: state.query))
       phase = .filtering(updatedEdit)
-    case .interrupt, .redraw:
+    case .interrupt, .suspend, .redraw:
       return .stay(redraw: false)
     }
 
@@ -391,7 +396,7 @@ struct PickerSession {
 
   private mutating func handleHelp(_ event: PickerEvent) -> PickerDecision {
     switch event {
-    case .escape, .text("?"), .text("q"):
+    case .escape, .text("?"), .text("h"), .text("q"):
       phase = .browse
       return .stay(redraw: true)
     default:

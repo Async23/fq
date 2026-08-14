@@ -130,7 +130,8 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("Backspace/Delete  删除"))
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
-    XCTAssertTrue(output.contains("q 或 Esc"))
+    XCTAssertTrue(output.contains("? 或 h  帮助"))
+    XCTAssertTrue(output.contains("Ctrl-Z  挂起，fg 返回"))
   }
 
   func testHelpKeepsSafetyAndExitCommandsVisibleAsHeightShrinks() {
@@ -139,12 +140,14 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     let common = render(session, rows: 16, columns: 90)
     XCTAssertTrue(common.contains("动作面板默认选择取消"))
-    XCTAssertTrue(common.contains("q 或 Esc  关闭 fq"))
+    XCTAssertTrue(common.contains("q/Esc/Ctrl-C  取消"))
+    XCTAssertTrue(common.contains("Ctrl-Z  挂起，fg 返回"))
     XCTAssertEqual(renderedLines(common).count, 16)
 
     let condensed = render(session, rows: 10, columns: 60)
     XCTAssertTrue(condensed.contains("确认默认选择取消"))
-    XCTAssertTrue(condensed.contains("q 或 Esc 关闭 fq"))
+    XCTAssertTrue(condensed.contains("q/Esc/Ctrl-C 取消"))
+    XCTAssertTrue(condensed.contains("Ctrl-Z 挂起，fg 返回"))
     XCTAssertEqual(renderedLines(condensed).count, 10)
 
     let terse = render(session, rows: 6, columns: 40)
@@ -367,7 +370,7 @@ final class TerminalPickerRendererTests: XCTestCase {
       .command(.text("f"))
     )
     XCTAssertEqual(
-      mouseTarget(at: "? 帮助", row: 24, session: session, dimensions: dimensions),
+      mouseTarget(at: "?/h 帮助", row: 24, session: session, dimensions: dimensions),
       .command(.text("?"))
     )
     XCTAssertEqual(
@@ -433,7 +436,7 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertEqual(
       mouseTarget(
-        at: "? / q / esc  返回",
+        at: "? / h / q / esc  返回",
         row: 18,
         session: session,
         dimensions: dimensions

@@ -177,7 +177,8 @@ public final class FQCommand {
       t / k                   打开正常退出 / 强制退出动作
       Ctrl-U；浏览中 Delete    清空筛选
       鼠标                     滚轮/滚动条浏览；列表和可见控件可点
-      ?                       查看选择器内帮助
+      ? / h                   查看选择器内帮助
+      Ctrl-Z                  挂起 fq；用 fg 返回当前界面
       q / Esc / Ctrl-C        取消
 
     动作面板默认选中取消；用 ← / → 或 Tab 切换，再按 Enter 执行所选项。

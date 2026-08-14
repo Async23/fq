@@ -76,6 +76,11 @@ struct TerminalMouseEvent: Equatable {
 
 @MainActor
 final class TerminalPicker: ApplicationPicking {
+  private static let enterInterface =
+    "\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1000h\u{001B}[?1006h"
+  private static let leaveInterface =
+    "\u{001B}[?1006l\u{001B}[?1000l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
+
   private let inputFileDescriptor: Int32
   private let outputFileDescriptor: Int32
   private let colorEnabled: Bool
@@ -118,10 +123,10 @@ final class TerminalPicker: ApplicationPicking {
       throw TerminalPickerError.terminalSetupFailed(errno)
     }
 
-    write("\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1000h\u{001B}[?1006h")
+    write(Self.enterInterface)
     defer {
       _ = tcsetattr(inputFileDescriptor, TCSAFLUSH, &original)
-      write("\u{001B}[?1006l\u{001B}[?1000l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l")
+      write(Self.leaveInterface)
     }
 
     var session = PickerSession(
@@ -162,6 +167,21 @@ final class TerminalPicker: ApplicationPicking {
         return nil
       case .select(let selection):
         return selection
+      case .suspend:
+        guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &original) == 0 else {
+          throw TerminalPickerError.terminalSetupFailed(errno)
+        }
+        write(Self.leaveInterface)
+        _ = Darwin.raise(SIGSTOP)
+
+        guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &raw) == 0 else {
+          throw TerminalPickerError.terminalSetupFailed(errno)
+        }
+        write(Self.enterInterface)
+        _ = session.replaceApplications(refreshApplications())
+        dimensions = terminalDimensions()
+        nextRefresh = ProcessInfo.processInfo.systemUptime + refreshInterval
+        render(session: session, dimensions: dimensions, clearScreen: true)
       case .stay(let redraw):
         if redraw {
           dimensions = terminalDimensions()
@@ -182,6 +202,8 @@ final class TerminalPicker: ApplicationPicking {
     switch first {
     case 3, 4:
       return .interrupt
+    case 26:
+      return .suspend
     case 10, 13:
       return .enter
     case 8, 127:

@@ -189,6 +189,7 @@ enum TerminalPickerRenderer {
           ("t 退出…", .text("t")),
           ("k 强退…", .text("k")),
           ("f 筛选", .text("f")),
+          ("?/h 帮助", .text("?")),
           ("? 帮助", .text("?")),
           ("q 关闭", .text("q")),
           ("↵", .enter),
@@ -315,6 +316,7 @@ enum TerminalPickerRenderer {
         ("esc", .escape),
         ("q", .escape),
         ("?", .escape),
+        ("h", .escape),
       ]
     )
   }
@@ -795,7 +797,7 @@ enum TerminalPickerRenderer {
       ("操作", .accent),
       ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
       ("动作面板默认选择取消；←/→/Tab 切换，Enter 执行所选。", .warning),
-      ("q 或 Esc  关闭 fq · Ctrl-C  随时取消", .normal),
+      ("? 或 h  帮助 · q/Esc/Ctrl-C  取消 · Ctrl-Z  挂起，fg 返回", .normal),
     ]
     let condensed: [(String, ContentStyle)] = [
       ("导航  ↑/↓ 移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
@@ -805,7 +807,7 @@ enum TerminalPickerRenderer {
       ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),
       ("操作  Enter \(defaultAction) · t 正常退出 · k 强制退出", .normal),
       ("确认默认选择取消；←/→/Tab 切换，Enter 执行。", .warning),
-      ("q 或 Esc 关闭 fq · Ctrl-C 随时取消", .normal),
+      ("?/h 帮助 · q/Esc/Ctrl-C 取消 · Ctrl-Z 挂起，fg 返回", .normal),
     ]
     let terse: [(String, ContentStyle)] = [
       ("↑↓/滚轮 选择 · ←→ 排序", .accent),
@@ -823,7 +825,7 @@ enum TerminalPickerRenderer {
     return terse
   }
 
-  private static let helpFooter = "? / q / esc  返回"
+  private static let helpFooter = "? / h / q / esc  返回"
 
   private static func compactHelpLayout(height: Int) -> CompactHelpLayout {
     let returnLabel = "q/Esc 返回"
@@ -993,7 +995,7 @@ enum TerminalPickerRenderer {
     } else {
       let enterAction = session.defaultAction == .forceQuit ? "强退" : "退出"
       actions = [
-        "─ ↑↓ 选择 │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ f 筛选 │ ? 帮助 │ q 关闭 ",
+        "─ ↑↓ 选择 │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ f 筛选 │ ?/h 帮助 │ q 关闭 ",
         "─ ↑↓ │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ ? │ q ",
         "─ ↑↓ │ ↵ \(enterAction) │ t/k │ q ",
         "─ ↑↓ │ ↵ │ q ",

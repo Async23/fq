@@ -314,10 +314,41 @@ final class PickerSessionTests: XCTestCase {
 
     _ = session.handle(.text("?"))
     XCTAssertEqual(session.phase, .help)
+    XCTAssertEqual(session.handle(.text("h")), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
+
+    _ = session.handle(.text("h"))
+    XCTAssertEqual(session.phase, .help)
     XCTAssertEqual(session.handle(.text("?")), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
 
     XCTAssertEqual(session.handle(.text("q")), .cancel)
+  }
+
+  func testSuspendPreservesTheCurrentPickerPhaseAndState() {
+    var filteringSession = makeSession(defaultAction: .forceQuit)
+    _ = filteringSession.handle(.move(1))
+    _ = filteringSession.handle(.text("f"))
+    _ = filteringSession.handle(.text("r"))
+    let filteringPhase = filteringSession.phase
+    let filteringState = filteringSession.state
+
+    XCTAssertEqual(filteringSession.handle(.suspend), .suspend)
+    XCTAssertEqual(filteringSession.phase, filteringPhase)
+    XCTAssertEqual(filteringSession.state, filteringState)
+
+    var confirmingSession = makeSession(defaultAction: .forceQuit)
+    _ = confirmingSession.handle(.enter)
+    _ = confirmingSession.handle(.cycleFocus)
+    let confirmingPhase = confirmingSession.phase
+
+    XCTAssertEqual(confirmingSession.handle(.suspend), .suspend)
+    XCTAssertEqual(confirmingSession.phase, confirmingPhase)
+
+    var helpSession = makeSession(defaultAction: .forceQuit)
+    _ = helpSession.handle(.text("h"))
+    XCTAssertEqual(helpSession.handle(.suspend), .suspend)
+    XCTAssertEqual(helpSession.phase, .help)
   }
 
   func testBrowseHorizontalAndReverseCommandsControlSorting() {
