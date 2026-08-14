@@ -15,6 +15,7 @@ protocol ApplicationPicking: AnyObject {
 enum TerminalPickerError: LocalizedError {
   case notATerminal
   case terminalSetupFailed(Int32)
+  case signalSetupFailed(Int32)
   case terminalReadFailed(Int32)
 
   var errorDescription: String? {
@@ -23,6 +24,8 @@ enum TerminalPickerError: LocalizedError {
       "交互选择器需要连接到终端。"
     case .terminalSetupFailed(let code):
       "无法切换终端输入模式（errno \(code)）。"
+    case .signalSetupFailed(let code):
+      "无法安装终端信号监视（errno \(code)）。"
     case .terminalReadFailed(let code):
       "无法读取终端输入（errno \(code)）。"
     }
@@ -207,14 +210,18 @@ final class TerminalPicker: ApplicationPicking {
     cfmakeraw(&raw)
     raw.c_cc.16 = 0  // VMIN
     raw.c_cc.17 = 1  // VTIME, one tenth of a second
-    guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &raw) == 0 else {
-      throw TerminalPickerError.terminalSetupFailed(errno)
-    }
 
-    write(Self.enterInterface)
+    let signalMonitor: TerminalSignalMonitor
+    do {
+      signalMonitor = try TerminalSignalMonitor()
+    } catch let error as TerminalSignalMonitorError {
+      throw TerminalPickerError.signalSetupFailed(error.code)
+    }
+    defer { signalMonitor.stop() }
+
+    try activateInterface(using: &raw)
     defer {
-      _ = tcsetattr(inputFileDescriptor, TCSAFLUSH, &original)
-      write(Self.leaveInterface)
+      restoreInterfaceBestEffort(using: &original)
     }
 
     var session = PickerSession(
@@ -228,7 +235,21 @@ final class TerminalPicker: ApplicationPicking {
     render(session: session, dimensions: dimensions, clearScreen: true)
 
     while true {
-      guard let event = try readEvent(session: session, dimensions: dimensions) else {
+      let event: PickerEvent
+      if let signalEvent = signalMonitor.consumeNext() {
+        switch signalEvent {
+        case .terminate(let signal):
+          terminate(
+            for: signal,
+            restoring: &original,
+            signalMonitor: signalMonitor
+          )
+        case .suspend:
+          event = .suspend
+        }
+      } else if let inputEvent = try readEvent(session: session, dimensions: dimensions) {
+        event = inputEvent
+      } else {
         var redraw = false
         var clearScreen = false
         let nextDimensions = terminalDimensions()
@@ -259,16 +280,10 @@ final class TerminalPicker: ApplicationPicking {
         return selection
       case .suspend:
         mouseInteraction.reset()
-        guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &original) == 0 else {
-          throw TerminalPickerError.terminalSetupFailed(errno)
-        }
-        write(Self.leaveInterface)
+        try deactivateInterface(restoring: &original)
         _ = Darwin.raise(SIGSTOP)
 
-        guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &raw) == 0 else {
-          throw TerminalPickerError.terminalSetupFailed(errno)
-        }
-        write(Self.enterInterface)
+        try activateInterface(using: &raw)
         _ = session.replaceApplications(refreshApplications())
         dimensions = terminalDimensions()
         session.synchronizeViewport(listRows: listRows(for: dimensions))
@@ -282,6 +297,39 @@ final class TerminalPicker: ApplicationPicking {
         }
       }
     }
+  }
+
+  private func activateInterface(using mode: inout termios) throws {
+    guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &mode) == 0 else {
+      throw TerminalPickerError.terminalSetupFailed(errno)
+    }
+    write(Self.enterInterface)
+  }
+
+  private func deactivateInterface(restoring mode: inout termios) throws {
+    let result = tcsetattr(inputFileDescriptor, TCSAFLUSH, &mode)
+    let errorCode = errno
+    write(Self.leaveInterface)
+    guard result == 0 else {
+      throw TerminalPickerError.terminalSetupFailed(errorCode)
+    }
+  }
+
+  private func restoreInterfaceBestEffort(using mode: inout termios) {
+    _ = tcsetattr(inputFileDescriptor, TCSAFLUSH, &mode)
+    write(Self.leaveInterface)
+  }
+
+  private func terminate(
+    for signal: Int32,
+    restoring mode: inout termios,
+    signalMonitor: TerminalSignalMonitor
+  ) -> Never {
+    mouseInteraction.reset()
+    restoreInterfaceBestEffort(using: &mode)
+    signalMonitor.stop()
+    _ = Darwin.raise(signal)
+    Darwin._exit(128 + signal)
   }
 
   private func readEvent(
