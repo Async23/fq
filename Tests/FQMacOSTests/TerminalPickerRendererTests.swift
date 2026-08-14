@@ -123,7 +123,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("导航"))
     XCTAssertTrue(output.contains("鼠标滚轮浏览 · 单击选择 · 再点打开动作"))
     XCTAssertTrue(output.contains("标题/底栏控件可点"))
-    XCTAssertTrue(output.contains("点击滚动轨迹跳转"))
+    XCTAssertTrue(output.contains("点击轨迹跳转 · 拖动滑块滚动"))
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
     XCTAssertTrue(output.contains("u  暂停/继续实时应用列表"))
     XCTAssertTrue(output.contains("f 或 /"))
@@ -255,7 +255,7 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: scrollbarColumn,
         row: 3
       ),
-      .command(.move(-6))
+      .command(.positionViewport(startIndex: 0, listRows: 6))
     )
     XCTAssertEqual(
       TerminalPickerRenderer.mouseTarget(
@@ -264,7 +264,7 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: scrollbarColumn,
         row: 9
       ),
-      .command(.move(6))
+      .command(.positionViewport(startIndex: 6, listRows: 6))
     )
     XCTAssertEqual(
       TerminalPickerRenderer.mouseTarget(
@@ -273,7 +273,7 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: scrollbarColumn,
         row: 4
       ),
-      .command(.move(0))
+      .scrollbarThumb
     )
     XCTAssertEqual(
       TerminalPickerRenderer.mouseTarget(
@@ -282,7 +282,7 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: scrollbarColumn,
         row: 8
       ),
-      .command(.move(19))
+      .command(.positionViewport(startIndex: 14, listRows: 6))
     )
     XCTAssertEqual(
       TerminalPickerRenderer.mouseTarget(
@@ -294,7 +294,9 @@ final class TerminalPickerRendererTests: XCTestCase {
       .application(0)
     )
 
-    _ = session.handle(.last)
+    _ = session.handle(.positionViewport(startIndex: 14, listRows: 6))
+    XCTAssertEqual(session.state.selectedIndex, 14)
+    XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 14..<20)
     XCTAssertEqual(
       TerminalPickerRenderer.mouseTarget(
         session: session,
@@ -302,7 +304,54 @@ final class TerminalPickerRendererTests: XCTestCase {
         column: scrollbarColumn,
         row: 8
       ),
-      .command(.move(0))
+      .scrollbarThumb
+    )
+  }
+
+  func testScrollbarDragTargetsClampToTheProportionalTrack() {
+    let manyApplications = (1...20).map { index in
+      rendererCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: manyApplications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    let dimensions = TerminalDimensions(rows: 10, columns: 90)
+    session.synchronizeViewport(listRows: 6)
+
+    XCTAssertEqual(
+      TerminalPickerRenderer.scrollbarDragTarget(
+        session: session,
+        dimensions: dimensions,
+        row: 1
+      ),
+      .command(.positionViewport(startIndex: 0, listRows: 6))
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.scrollbarDragTarget(
+        session: session,
+        dimensions: dimensions,
+        row: 6
+      ),
+      .command(.positionViewport(startIndex: 7, listRows: 6))
+    )
+    XCTAssertEqual(
+      TerminalPickerRenderer.scrollbarDragTarget(
+        session: session,
+        dimensions: dimensions,
+        row: 10
+      ),
+      .command(.positionViewport(startIndex: 14, listRows: 6))
+    )
+
+    _ = session.handle(.text("h"))
+    XCTAssertNil(
+      TerminalPickerRenderer.scrollbarDragTarget(
+        session: session,
+        dimensions: dimensions,
+        row: 8
+      )
     )
   }
 

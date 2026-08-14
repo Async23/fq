@@ -19,16 +19,19 @@ struct PickerFilterEdit: Equatable {
   let originalQuery: String
   let originalSelectionIdentity: ApplicationIdentity?
   let originalSelectedIndex: Int
+  let originalViewportStartIndex: Int
   private(set) var cursorOffset: Int
 
   init(
     query: String,
     selectedIdentity: ApplicationIdentity? = nil,
-    selectedIndex: Int = 0
+    selectedIndex: Int = 0,
+    viewportStartIndex: Int = 0
   ) {
     originalQuery = query
     originalSelectionIdentity = selectedIdentity
     originalSelectedIndex = max(0, selectedIndex)
+    originalViewportStartIndex = max(0, viewportStartIndex)
     cursorOffset = query.count
   }
 
@@ -114,6 +117,7 @@ enum PickerEvent: Equatable {
   case interrupt
   case suspend
   case move(Int)
+  case positionViewport(startIndex: Int, listRows: Int)
   case moveHorizontal(Int)
   case cycleFocus
   case chooseConfirmation(PickerConfirmationChoice)
@@ -139,6 +143,8 @@ struct PickerSession {
   private(set) var phase: PickerPhase = .browse
   private(set) var statusMessage: String?
   private(set) var isPaused = false
+  private(set) var viewportStartIndex = 0
+  private var viewportListRows: Int?
   private var latestApplications: [ApplicationCandidate]
 
   init(
@@ -179,6 +185,30 @@ struct PickerSession {
     return latestApplications.contains(where: { $0.id == selection.application.id })
   }
 
+  func visibleApplicationRange(listRows: Int) -> Range<Int> {
+    let visibleCount = state.visibleApplications.count
+    let rowCount = max(0, listRows)
+    guard visibleCount > 0, rowCount > 0 else {
+      return 0..<0
+    }
+
+    let selectedIndex = min(state.selectedIndex, visibleCount - 1)
+    let maxStartIndex = max(0, visibleCount - rowCount)
+    var startIndex = min(max(0, viewportStartIndex), maxStartIndex)
+    if selectedIndex < startIndex {
+      startIndex = selectedIndex
+    } else if selectedIndex >= startIndex + rowCount {
+      startIndex = min(maxStartIndex, selectedIndex - rowCount + 1)
+    }
+    return startIndex..<min(visibleCount, startIndex + rowCount)
+  }
+
+  mutating func synchronizeViewport(listRows: Int) {
+    let rowCount = max(1, listRows)
+    viewportListRows = rowCount
+    viewportStartIndex = visibleApplicationRange(listRows: rowCount).lowerBound
+  }
+
   @discardableResult
   mutating func replaceApplications(_ applications: [ApplicationCandidate]) -> Bool {
     let targetWasAvailable = isConfirmationTargetAvailable
@@ -217,10 +247,18 @@ struct PickerSession {
     if targetWasAvailable != isConfirmationTargetAvailable {
       shouldRedraw = true
     }
+    if let viewportListRows {
+      synchronizeViewport(listRows: viewportListRows)
+    }
     return shouldRedraw
   }
 
   mutating func handle(_ event: PickerEvent) -> PickerDecision {
+    defer {
+      if let viewportListRows {
+        synchronizeViewport(listRows: viewportListRows)
+      }
+    }
     if case .interrupt = event {
       return .cancel
     }
@@ -252,6 +290,8 @@ struct PickerSession {
       return .cancel
     case .move(let offset):
       state.moveSelection(by: offset)
+    case .positionViewport(let startIndex, let listRows):
+      positionViewport(at: startIndex, listRows: listRows)
     case .moveHorizontal(let offset):
       state.cycleSort(by: offset)
     case .cycleFocus:
@@ -272,6 +312,7 @@ struct PickerSession {
         return .stay(redraw: false)
       }
       state.clearQuery()
+      viewportStartIndex = 0
     case .text(let text):
       switch text {
       case "q":
@@ -309,7 +350,7 @@ struct PickerSession {
     case .move(let offset) where offset == 1:
       phase = .browse
       state.moveSelection(by: offset)
-    case .move, .cycleFocus, .chooseConfirmation:
+    case .move, .positionViewport, .cycleFocus, .chooseConfirmation:
       return .stay(redraw: false)
     case .moveHorizontal(let offset):
       guard updatedEdit.moveCursor(by: offset, in: state.query) else {
@@ -334,21 +375,25 @@ struct PickerSession {
         return .stay(redraw: false)
       }
       state.replaceQuery(query)
+      viewportStartIndex = 0
       phase = .filtering(updatedEdit)
     case .deleteForward:
       guard let query = updatedEdit.deletingForward(in: state.query) else {
         return .stay(redraw: false)
       }
       state.replaceQuery(query)
+      viewportStartIndex = 0
       phase = .filtering(updatedEdit)
     case .clear:
       guard let query = updatedEdit.clear(query: state.query) else {
         return .stay(redraw: false)
       }
       state.replaceQuery(query)
+      viewportStartIndex = 0
       phase = .filtering(updatedEdit)
     case .text(let text):
       state.replaceQuery(updatedEdit.inserting(text, into: state.query))
+      viewportStartIndex = 0
       phase = .filtering(updatedEdit)
     case .interrupt, .suspend, .redraw:
       return .stay(redraw: false)
@@ -384,7 +429,7 @@ struct PickerSession {
         return .stay(redraw: false)
       }
       return .select(confirmation.selection)
-    case .move:
+    case .move, .positionViewport:
       return .stay(redraw: false)
     case .escape, .text("n"), .text("N"), .text("q"):
       phase = .browse
@@ -412,7 +457,8 @@ struct PickerSession {
     PickerFilterEdit(
       query: state.query,
       selectedIdentity: state.selectedApplication?.id,
-      selectedIndex: state.selectedIndex
+      selectedIndex: state.selectedIndex,
+      viewportStartIndex: viewportStartIndex
     )
   }
 
@@ -426,7 +472,30 @@ struct PickerSession {
     } else {
       targetIndex = edit.originalSelectedIndex
     }
+    let originalSelectedRow = max(
+      0,
+      edit.originalSelectedIndex - edit.originalViewportStartIndex
+    )
+    viewportStartIndex = max(0, targetIndex - originalSelectedRow)
     state.moveSelection(by: targetIndex - state.selectedIndex)
+  }
+
+  private mutating func positionViewport(at requestedStartIndex: Int, listRows: Int) {
+    let visibleCount = state.visibleApplications.count
+    let rowCount = max(1, listRows)
+    viewportListRows = rowCount
+    guard visibleCount > 0 else {
+      viewportStartIndex = 0
+      return
+    }
+
+    let currentStartIndex = visibleApplicationRange(listRows: rowCount).lowerBound
+    let selectedRow = min(max(0, state.selectedIndex - currentStartIndex), rowCount - 1)
+    let maxStartIndex = max(0, visibleCount - rowCount)
+    let targetStartIndex = min(max(0, requestedStartIndex), maxStartIndex)
+    let targetSelectedIndex = min(visibleCount - 1, targetStartIndex + selectedRow)
+    viewportStartIndex = targetStartIndex
+    state.moveSelection(by: targetSelectedIndex - state.selectedIndex)
   }
 
   private mutating func togglePause() {

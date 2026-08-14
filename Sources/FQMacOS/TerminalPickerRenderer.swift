@@ -9,6 +9,7 @@ struct TerminalDimensions: Equatable {
 enum PickerMouseTarget: Equatable {
   case application(Int)
   case command(PickerEvent)
+  case scrollbarThumb
   case confirmationExecute
   case confirmationCancel
 }
@@ -30,12 +31,24 @@ enum TerminalPickerRenderer {
     let listRows: Int
     let trackCount: Int
     let thumbOffset: Int
+    let viewportStartIndex: Int
+    let maxStartIndex: Int
 
     func cell(forListOffset offset: Int) -> String {
       if offset == listRows - 1 {
         return "↓"
       }
       return offset == thumbOffset ? "█" : " "
+    }
+
+    func startIndex(forTrackOffset requestedOffset: Int) -> Int {
+      guard trackCount > 1 else {
+        return viewportStartIndex
+      }
+      let trackOffset = min(max(0, requestedOffset), trackCount - 1)
+      return Int(
+        (Double(trackOffset) * Double(maxStartIndex) / Double(trackCount - 1)).rounded()
+      )
     }
   }
 
@@ -113,6 +126,28 @@ enum TerminalPickerRenderer {
     case .filtering:
       return nil
     }
+  }
+
+  static func scrollbarDragTarget(
+    session: PickerSession,
+    dimensions: TerminalDimensions,
+    row: Int
+  ) -> PickerMouseTarget? {
+    guard case .browse = session.phase else {
+      return nil
+    }
+    let height = max(1, dimensions.rows)
+    guard let scrollbar = listScrollbarLayout(session: session, height: height) else {
+      return nil
+    }
+
+    let trackOffset = min(max(0, row - 4), scrollbar.trackCount - 1)
+    return .command(
+      .positionViewport(
+        startIndex: scrollbar.startIndex(forTrackOffset: trackOffset),
+        listRows: scrollbar.listRows
+      )
+    )
   }
 
   private static func browseMouseTarget(
@@ -224,26 +259,39 @@ enum TerminalPickerRenderer {
     }
 
     if row == 3 {
-      return .command(.move(-scrollbar.listRows))
+      return .command(
+        .positionViewport(
+          startIndex: max(0, scrollbar.viewportStartIndex - scrollbar.listRows),
+          listRows: scrollbar.listRows
+        )
+      )
     }
     if row == height - 1 {
-      return .command(.move(scrollbar.listRows))
+      return .command(
+        .positionViewport(
+          startIndex: min(
+            scrollbar.maxStartIndex,
+            scrollbar.viewportStartIndex + scrollbar.listRows
+          ),
+          listRows: scrollbar.listRows
+        )
+      )
     }
 
     let trackOffset = row - 4
     guard (0..<scrollbar.trackCount).contains(trackOffset) else {
       return nil
     }
-    if trackOffset == scrollbar.thumbOffset || scrollbar.trackCount == 1 {
-      return .command(.move(0))
+    if trackOffset == scrollbar.thumbOffset {
+      return .scrollbarThumb
     }
 
-    let visible = session.state.visibleApplications
-    let targetIndex = Int(
-      (Double(trackOffset) * Double(visible.count - 1) / Double(scrollbar.trackCount - 1))
-        .rounded()
+    return .command(
+      .positionViewport(
+        startIndex: scrollbar.startIndex(forTrackOffset: trackOffset),
+        listRows: scrollbar.listRows
+      )
     )
-    return .command(.move(targetIndex - session.state.selectedIndex))
   }
 
   private static func compactBrowseMouseTarget(
@@ -471,12 +519,8 @@ enum TerminalPickerRenderer {
     session: PickerSession,
     height: Int
   ) -> Range<Int> {
-    let visible = session.state.visibleApplications
-    let selectedIndex = min(session.state.selectedIndex, max(0, visible.count - 1))
     let listRows = max(0, height - 4)
-    let startIndex = max(0, selectedIndex - listRows + 1)
-    let endIndex = min(visible.count, startIndex + listRows)
-    return startIndex..<endIndex
+    return session.visibleApplicationRange(listRows: listRows)
   }
 
   private static func listScrollbarLayout(
@@ -499,7 +543,9 @@ enum TerminalPickerRenderer {
     return ListScrollbarLayout(
       listRows: listRows,
       trackCount: trackCount,
-      thumbOffset: thumbOffset
+      thumbOffset: thumbOffset,
+      viewportStartIndex: startIndex,
+      maxStartIndex: maxStartIndex
     )
   }
 
@@ -787,7 +833,7 @@ enum TerminalPickerRenderer {
       ("导航", .accent),
       ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
       ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
-      ("长列表右侧 ↑/↓ 翻页 · 点击滚动轨迹跳转", .normal),
+      ("长列表右侧 ↑/↓ 翻页 · 点击轨迹跳转 · 拖动滑块滚动", .normal),
       ("列表", .accent),
       ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
       ("u  暂停/继续实时应用列表", .normal),
@@ -801,7 +847,7 @@ enum TerminalPickerRenderer {
     ]
     let condensed: [(String, ContentStyle)] = [
       ("导航  ↑/↓ 移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
-      ("鼠标滚轮/滚动条浏览 · 单击选择 · 再点打开动作", .normal),
+      ("鼠标 滚轮浏览 · 单击选择/再点动作 · 滚动条点击/拖动", .normal),
       ("列表  ←/→ 切换排序 · r 反向 · u 暂停/继续", .normal),
       ("筛选  f 或 / 编辑 · ←/→/Home/End 移动光标", .normal),
       ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),

@@ -31,6 +31,8 @@ enum TerminalPickerError: LocalizedError {
 
 enum TerminalMouseAction: Equatable {
   case leftPress
+  case leftDrag
+  case leftRelease
   case scrollUp
   case scrollDown
 }
@@ -41,9 +43,6 @@ struct TerminalMouseEvent: Equatable {
   let row: Int
 
   static func parse(sgrPayload: String, terminator: Character) -> TerminalMouseEvent? {
-    guard terminator == "M" else {
-      return nil
-    }
     let fields = sgrPayload.split(separator: ";", omittingEmptySubsequences: false)
     guard fields.count == 3,
       let buttonCode = Int(fields[0]),
@@ -52,40 +51,128 @@ struct TerminalMouseEvent: Equatable {
       buttonCode >= 0,
       buttonCode <= 127,
       column > 0,
-      row > 0,
-      buttonCode & 32 == 0
+      row > 0
     else {
       return nil
     }
 
     let action: TerminalMouseAction
-    if buttonCode & 64 != 0 {
-      guard buttonCode & 3 <= 1 else {
+    if terminator == "m" {
+      guard buttonCode & 96 == 0, buttonCode & 3 == 0 else {
+        return nil
+      }
+      action = .leftRelease
+    } else if terminator == "M", buttonCode & 64 != 0 {
+      guard buttonCode & 32 == 0, buttonCode & 3 <= 1 else {
         return nil
       }
       action = buttonCode & 1 == 0 ? .scrollUp : .scrollDown
-    } else {
+    } else if terminator == "M", buttonCode & 32 != 0 {
+      guard buttonCode & 3 == 0 else {
+        return nil
+      }
+      action = .leftDrag
+    } else if terminator == "M" {
       guard buttonCode & 3 == 0 else {
         return nil
       }
       action = .leftPress
+    } else {
+      return nil
     }
     return TerminalMouseEvent(action: action, column: column, row: row)
+  }
+}
+
+struct TerminalMouseInteraction {
+  private(set) var isDraggingScrollbar = false
+
+  mutating func reset() {
+    isDraggingScrollbar = false
+  }
+
+  mutating func event(
+    for mouseEvent: TerminalMouseEvent,
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) -> PickerEvent? {
+    switch mouseEvent.action {
+    case .scrollUp, .scrollDown:
+      isDraggingScrollbar = false
+      guard case .browse = session.phase else {
+        return nil
+      }
+      let listRows = max(1, dimensions.rows - 4)
+      let startIndex = session.visibleApplicationRange(listRows: listRows).lowerBound
+      let offset = mouseEvent.action == .scrollUp ? -3 : 3
+      return .positionViewport(startIndex: startIndex + offset, listRows: listRows)
+    case .leftRelease:
+      isDraggingScrollbar = false
+      return nil
+    case .leftDrag:
+      guard isDraggingScrollbar else {
+        return nil
+      }
+      guard
+        let target = TerminalPickerRenderer.scrollbarDragTarget(
+          session: session,
+          dimensions: dimensions,
+          row: mouseEvent.row
+        ),
+        case .command(let event) = target
+      else {
+        isDraggingScrollbar = false
+        return nil
+      }
+      return event
+    case .leftPress:
+      isDraggingScrollbar = false
+      if case .filtering = session.phase {
+        return .escape
+      }
+      guard
+        let target = TerminalPickerRenderer.mouseTarget(
+          session: session,
+          dimensions: dimensions,
+          column: mouseEvent.column,
+          row: mouseEvent.row
+        )
+      else {
+        return nil
+      }
+
+      switch target {
+      case .application(let index):
+        return index == session.state.selectedIndex
+          ? .enter
+          : .move(index - session.state.selectedIndex)
+      case .command(let event):
+        return event
+      case .scrollbarThumb:
+        isDraggingScrollbar = true
+        return nil
+      case .confirmationExecute:
+        return .chooseConfirmation(.execute)
+      case .confirmationCancel:
+        return .chooseConfirmation(.cancel)
+      }
+    }
   }
 }
 
 @MainActor
 final class TerminalPicker: ApplicationPicking {
   private static let enterInterface =
-    "\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1000h\u{001B}[?1006h"
+    "\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1002h\u{001B}[?1006h"
   private static let leaveInterface =
-    "\u{001B}[?1006l\u{001B}[?1000l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
+    "\u{001B}[?1006l\u{001B}[?1002l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
 
   private let inputFileDescriptor: Int32
   private let outputFileDescriptor: Int32
   private let colorEnabled: Bool
   private let refreshInterval: TimeInterval
   private var bufferedByte: UInt8?
+  private var mouseInteraction = TerminalMouseInteraction()
 
   init(
     inputFileDescriptor: Int32 = STDIN_FILENO,
@@ -110,6 +197,7 @@ final class TerminalPicker: ApplicationPicking {
     }
 
     bufferedByte = nil
+    mouseInteraction.reset()
     var original = termios()
     guard tcgetattr(inputFileDescriptor, &original) == 0 else {
       throw TerminalPickerError.terminalSetupFailed(errno)
@@ -135,6 +223,7 @@ final class TerminalPicker: ApplicationPicking {
       defaultAction: action
     )
     var dimensions = terminalDimensions()
+    session.synchronizeViewport(listRows: listRows(for: dimensions))
     var nextRefresh = ProcessInfo.processInfo.systemUptime + refreshInterval
     render(session: session, dimensions: dimensions, clearScreen: true)
 
@@ -145,6 +234,7 @@ final class TerminalPicker: ApplicationPicking {
         let nextDimensions = terminalDimensions()
         if nextDimensions != dimensions {
           dimensions = nextDimensions
+          session.synchronizeViewport(listRows: listRows(for: dimensions))
           redraw = true
           clearScreen = true
         }
@@ -168,6 +258,7 @@ final class TerminalPicker: ApplicationPicking {
       case .select(let selection):
         return selection
       case .suspend:
+        mouseInteraction.reset()
         guard tcsetattr(inputFileDescriptor, TCSAFLUSH, &original) == 0 else {
           throw TerminalPickerError.terminalSetupFailed(errno)
         }
@@ -180,11 +271,13 @@ final class TerminalPicker: ApplicationPicking {
         write(Self.enterInterface)
         _ = session.replaceApplications(refreshApplications())
         dimensions = terminalDimensions()
+        session.synchronizeViewport(listRows: listRows(for: dimensions))
         nextRefresh = ProcessInfo.processInfo.systemUptime + refreshInterval
         render(session: session, dimensions: dimensions, clearScreen: true)
       case .stay(let redraw):
         if redraw {
           dimensions = terminalDimensions()
+          session.synchronizeViewport(listRows: listRows(for: dimensions))
           render(session: session, dimensions: dimensions, clearScreen: false)
         }
       }
@@ -247,7 +340,7 @@ final class TerminalPicker: ApplicationPicking {
     switch third {
     case 60:
       return try readMouseEvent().flatMap {
-        pickerEvent(for: $0, session: session, dimensions: dimensions)
+        mouseInteraction.event(for: $0, session: session, dimensions: dimensions)
       }
     case 65:
       return .move(-1)
@@ -282,12 +375,12 @@ final class TerminalPicker: ApplicationPicking {
       guard try readByte() == 126 else {
         return nil
       }
-      return .move(-pageSize())
+      return pageEvent(direction: -1, session: session, dimensions: dimensions)
     case 54:
       guard try readByte() == 126 else {
         return nil
       }
-      return .move(pageSize())
+      return pageEvent(direction: 1, session: session, dimensions: dimensions)
     default:
       return nil
     }
@@ -308,52 +401,6 @@ final class TerminalPicker: ApplicationPicking {
       payload.append(Character(UnicodeScalar(byte)))
     }
     return nil
-  }
-
-  private func pickerEvent(
-    for mouseEvent: TerminalMouseEvent,
-    session: PickerSession,
-    dimensions: TerminalDimensions
-  ) -> PickerEvent? {
-    switch mouseEvent.action {
-    case .scrollUp:
-      guard case .browse = session.phase else {
-        return nil
-      }
-      return .move(-3)
-    case .scrollDown:
-      guard case .browse = session.phase else {
-        return nil
-      }
-      return .move(3)
-    case .leftPress:
-      if case .filtering = session.phase {
-        return .escape
-      }
-      guard
-        let target = TerminalPickerRenderer.mouseTarget(
-          session: session,
-          dimensions: dimensions,
-          column: mouseEvent.column,
-          row: mouseEvent.row
-        )
-      else {
-        return nil
-      }
-
-      switch target {
-      case .application(let index):
-        return index == session.state.selectedIndex
-          ? .enter
-          : .move(index - session.state.selectedIndex)
-      case .command(let event):
-        return event
-      case .confirmationExecute:
-        return .chooseConfirmation(.execute)
-      case .confirmationCancel:
-        return .chooseConfirmation(.cancel)
-      }
-    }
   }
 
   private func readUTF8Sequence(startingWith first: UInt8) throws -> String? {
@@ -411,8 +458,21 @@ final class TerminalPicker: ApplicationPicking {
     )
   }
 
-  private func pageSize() -> Int {
-    max(1, terminalDimensions().rows - 4)
+  private func listRows(for dimensions: TerminalDimensions) -> Int {
+    max(1, dimensions.rows - 4)
+  }
+
+  private func pageEvent(
+    direction: Int,
+    session: PickerSession,
+    dimensions: TerminalDimensions
+  ) -> PickerEvent {
+    let listRows = listRows(for: dimensions)
+    let startIndex = session.visibleApplicationRange(listRows: listRows).lowerBound
+    return .positionViewport(
+      startIndex: startIndex + direction * listRows,
+      listRows: listRows
+    )
   }
 
   private func render(

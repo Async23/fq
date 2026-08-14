@@ -351,6 +351,60 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(helpSession.phase, .help)
   }
 
+  func testViewportScrollingKeepsTheSelectionOnItsScreenRow() {
+    let manyApplications = (1...20).map { index in
+      pickerCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: manyApplications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    session.synchronizeViewport(listRows: 6)
+
+    _ = session.handle(.move(5))
+    XCTAssertEqual(session.state.selectedIndex, 5)
+    XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 0..<6)
+
+    _ = session.handle(.positionViewport(startIndex: 6, listRows: 6))
+    XCTAssertEqual(session.state.selectedIndex, 11)
+    XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 6..<12)
+
+    _ = session.handle(.move(-1))
+    XCTAssertEqual(session.state.selectedIndex, 10)
+    XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 6..<12)
+
+    _ = session.handle(.positionViewport(startIndex: 100, listRows: 6))
+    XCTAssertEqual(session.state.selectedIndex, 18)
+    XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 14..<20)
+  }
+
+  func testCancellingFilterRestoresThePreviousViewport() {
+    let manyApplications = (1...20).map { index in
+      pickerCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: manyApplications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    session.synchronizeViewport(listRows: 6)
+    _ = session.handle(.positionViewport(startIndex: 9, listRows: 6))
+    _ = session.handle(.move(2))
+    let selectedApplication = session.state.selectedApplication
+
+    _ = session.handle(.text("f"))
+    _ = session.handle(.text("z"))
+    _ = session.replaceApplications(Array(manyApplications.reversed()))
+    XCTAssertEqual(session.viewportStartIndex, 0)
+    XCTAssertTrue(session.state.visibleApplications.isEmpty)
+
+    _ = session.handle(.escape)
+    XCTAssertEqual(session.state.selectedApplication, selectedApplication)
+    XCTAssertEqual(session.state.selectedIndex, 8)
+    XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 6..<12)
+  }
+
   func testBrowseHorizontalAndReverseCommandsControlSorting() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.move(1))
