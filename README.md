@@ -1,0 +1,65 @@
+# fq
+
+`fq` 是 macOS 的终端版“强制退出应用”：输入一条命令，在原生 TUI 中筛选普通 GUI 应用，选中并确认后强制退出。
+
+它不依赖 `fzf`，也不是 `btop` 的进程列表换皮。应用范围来自 macOS 的 `NSWorkspace`，并只保留系统标记为 `.regular` 的应用，因此更接近 `Cmd + Option + Esc` 所展示的“应用”，而不是所有 Unix 进程。
+
+## 安装
+
+需要 macOS 13 或更新版本，以及 Xcode Command Line Tools。
+
+```sh
+cd ~/code/demo/fq
+make install
+```
+
+默认安装到 `~/.local/bin/fq`。如果这个目录已在 `PATH` 中，随后可直接运行：
+
+```sh
+fq
+```
+
+## 使用
+
+```sh
+fq                         # 选择应用，确认后强制退出
+fq safari                  # 打开时先按 safari 筛选
+fq --quit                  # 请求正常退出，相当于应用级 Cmd-Q
+fq --list                  # 非交互地列出应用
+fq --json code             # 以 JSON 列出匹配 code 的应用
+```
+
+选择器里直接输入文字进行模糊筛选；按物理方向键 `↑` / `↓` 移动，`Enter` 选择，`Esc` 或 `Ctrl-C` 取消，`Ctrl-U` 清空搜索。
+
+强制退出前必须再输入 `y` 确认，默认答案是“否”。正常退出模式不额外确认。Finder 会显示专门的“将自动重新打开”提示。
+
+完整参数见：
+
+```sh
+fq --help
+```
+
+## 它会显示哪些应用
+
+`fq` 枚举 `NSWorkspace.shared.runningApplications`，只显示 `activationPolicy == .regular` 的运行中应用：
+
+- 会显示普通桌面应用，包括隐藏或没有可见窗口的普通应用。
+- 不显示 shell 命令、守护进程和大多数仅菜单栏/后台应用。
+- macOS 没有提供稳定公开的“应用未响应”列表接口，因此 `fq` 不声称能复刻系统窗口中的“未响应”标记。
+
+执行退出前，`fq` 会再次核对 PID、Bundle ID 和启动时间。如果原进程已经退出、PID 被复用或身份发生变化，它会取消操作，而不是向新进程发送退出请求。
+
+## 开发
+
+```sh
+make format       # 格式化 Swift 源码
+make check        # 格式检查、测试、Release 构建
+```
+
+代码分成三个模块：
+
+- `FQCore`：命令行解析、候选应用模型、模糊匹配和选择状态。
+- `FQMacOS`：AppKit 应用枚举/退出适配器、终端选择器和命令编排。
+- `fq`：极薄的可执行入口。
+
+这种边界让纯逻辑无需启动 AppKit 或真实终端即可测试，同时把 macOS 与终端细节封装在内部适配器后面。
