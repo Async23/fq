@@ -1,8 +1,14 @@
 import FQCore
 
-struct ApplicationExitSelection: Equatable {
-  let application: ApplicationCandidate
+struct ApplicationExitPlan: Equatable {
+  let applications: [ApplicationCandidate]
   let action: ApplicationExitAction
+
+  init(applications: [ApplicationCandidate], action: ApplicationExitAction) {
+    precondition(!applications.isEmpty)
+    self.applications = applications
+    self.action = action
+  }
 }
 
 enum PickerConfirmationChoice: Equatable {
@@ -11,7 +17,7 @@ enum PickerConfirmationChoice: Equatable {
 }
 
 struct PickerConfirmation: Equatable {
-  let selection: ApplicationExitSelection
+  let plan: ApplicationExitPlan
   var choice: PickerConfirmationChoice = .cancel
   var isDirectExecutionArmed = false
 }
@@ -137,7 +143,7 @@ enum PickerEvent: Equatable {
 enum PickerDecision: Equatable {
   case stay(redraw: Bool)
   case cancel
-  case select(ApplicationExitSelection)
+  case select(ApplicationExitPlan)
   case suspend
 }
 
@@ -148,6 +154,7 @@ struct PickerSession {
   private(set) var statusMessage: String?
   private(set) var isPaused = false
   private(set) var viewportStartIndex = 0
+  private(set) var markedApplicationIdentities: [ApplicationIdentity] = []
   private var viewportListRows: Int?
   private var latestApplications: [ApplicationCandidate]
 
@@ -161,11 +168,24 @@ struct PickerSession {
     latestApplications = applications
   }
 
-  var confirmationSelection: ApplicationExitSelection? {
+  var confirmationPlan: ApplicationExitPlan? {
     guard case .confirming(let confirmation) = phase else {
       return nil
     }
-    return confirmation.selection
+    return confirmation.plan
+  }
+
+  var confirmationAvailableApplications: [ApplicationCandidate] {
+    guard let plan = confirmationPlan else {
+      return []
+    }
+    return plan.applications.compactMap { target in
+      latestApplications.first(where: { $0.id == target.id })
+    }
+  }
+
+  var unavailableConfirmationTargetCount: Int {
+    max(0, (confirmationPlan?.applications.count ?? 0) - confirmationAvailableApplications.count)
   }
 
   var confirmationChoice: PickerConfirmationChoice? {
@@ -183,10 +203,11 @@ struct PickerSession {
   }
 
   var isConfirmationTargetAvailable: Bool {
-    guard let selection = confirmationSelection else {
-      return false
-    }
-    return latestApplications.contains(where: { $0.id == selection.application.id })
+    !confirmationAvailableApplications.isEmpty
+  }
+
+  func isMarked(_ application: ApplicationCandidate) -> Bool {
+    markedApplicationIdentities.contains(application.id)
   }
 
   func visibleApplicationRange(listRows: Int) -> Range<Int> {
@@ -215,7 +236,7 @@ struct PickerSession {
 
   @discardableResult
   mutating func replaceApplications(_ applications: [ApplicationCandidate]) -> Bool {
-    let targetWasAvailable = isConfirmationTargetAvailable
+    let previousAvailableTargetCount = confirmationAvailableApplications.count
     latestApplications = applications
 
     var shouldRedraw = false
@@ -224,15 +245,20 @@ struct PickerSession {
       shouldRedraw = true
     }
 
-    if case .confirming(let confirmation) = phase,
-      let refreshedApplication = applications.first(where: {
-        $0.id == confirmation.selection.application.id
-      })
-    {
+    if !isPaused {
+      if discardUnavailableMarks(in: applications) {
+        shouldRedraw = true
+      }
+    }
+
+    if case .confirming(let confirmation) = phase {
+      let refreshedApplications = confirmation.plan.applications.map { target in
+        applications.first(where: { $0.id == target.id }) ?? target
+      }
       let refreshedConfirmation = PickerConfirmation(
-        selection: ApplicationExitSelection(
-          application: refreshedApplication,
-          action: confirmation.selection.action
+        plan: ApplicationExitPlan(
+          applications: refreshedApplications,
+          action: confirmation.plan.action
         ),
         choice: confirmation.choice,
         isDirectExecutionArmed: confirmation.isDirectExecutionArmed
@@ -241,15 +267,20 @@ struct PickerSession {
         phase = .confirming(refreshedConfirmation)
         shouldRedraw = true
       }
-    } else if case .confirming(var confirmation) = phase {
-      if confirmation.choice != .cancel {
-        confirmation.choice = .cancel
-        phase = .confirming(confirmation)
-        shouldRedraw = true
-      }
     }
 
-    if targetWasAvailable != isConfirmationTargetAvailable {
+    let availableTargetCountChanged =
+      previousAvailableTargetCount != confirmationAvailableApplications.count
+    if case .confirming(var confirmation) = phase,
+      availableTargetCountChanged,
+      confirmation.choice != .cancel
+    {
+      confirmation.choice = .cancel
+      phase = .confirming(confirmation)
+      shouldRedraw = true
+    }
+
+    if availableTargetCountChanged {
       shouldRedraw = true
     }
     if let viewportListRows {
@@ -330,11 +361,21 @@ struct PickerSession {
         return .cancel
       case "f", "/":
         beginFiltering()
-      case "?", "h":
+      case "?", "H":
         phase = .help
+      case "h":
+        state.cycleSort(by: -1)
+      case "j":
+        state.moveSelection(by: 1)
+      case "k":
+        state.moveSelection(by: -1)
+      case "l":
+        state.cycleSort(by: 1)
+      case " ":
+        toggleMark()
       case "t":
         return requestExit(.quit)
-      case "k":
+      case "K":
         return requestExit(.forceQuit)
       case "r":
         state.toggleSortDirection()
@@ -431,16 +472,16 @@ struct PickerSession {
   ) -> PickerDecision {
     switch event {
     case .enter, .text(" "):
-      guard confirmation.choice == .execute, isConfirmationTargetAvailable else {
+      guard confirmation.choice == .execute, let plan = availableConfirmationPlan() else {
         phase = .browse
         return .stay(redraw: true)
       }
-      return .select(confirmation.selection)
+      return .select(plan)
     case .text("y"), .text("Y"):
-      guard confirmation.isDirectExecutionArmed, isConfirmationTargetAvailable else {
+      guard confirmation.isDirectExecutionArmed, let plan = availableConfirmationPlan() else {
         return .stay(redraw: false)
       }
-      return .select(confirmation.selection)
+      return .select(plan)
     case .inputIdle:
       guard !confirmation.isDirectExecutionArmed else {
         return .stay(redraw: false)
@@ -461,10 +502,10 @@ struct PickerSession {
       phase = .browse
       return .stay(redraw: true)
     case .chooseConfirmation(.execute):
-      guard isConfirmationTargetAvailable else {
+      guard let plan = availableConfirmationPlan() else {
         return .stay(redraw: false)
       }
-      return .select(confirmation.selection)
+      return .select(plan)
     case .move, .positionViewport:
       return .stay(redraw: false)
     case .escape, .backspace, .text("n"), .text("N"), .text("q"):
@@ -477,7 +518,7 @@ struct PickerSession {
 
   private mutating func handleHelp(_ event: PickerEvent) -> PickerDecision {
     switch event {
-    case .escape, .help, .text("?"), .text("h"), .text("q"):
+    case .escape, .help, .text("?"), .text("h"), .text("H"), .text("q"):
       phase = .browse
       return .stay(redraw: true)
     default:
@@ -553,21 +594,75 @@ struct PickerSession {
 
   private mutating func togglePause() {
     isPaused.toggle()
-    if !isPaused, latestApplications != state.applications {
-      state.replaceApplications(latestApplications)
+    if !isPaused {
+      if latestApplications != state.applications {
+        state.replaceApplications(latestApplications)
+      }
+      discardUnavailableMarks(in: latestApplications)
+    }
+  }
+
+  @discardableResult
+  private mutating func discardUnavailableMarks(
+    in applications: [ApplicationCandidate]
+  ) -> Bool {
+    let availableIdentities = Set(applications.map(\.id))
+    let retainedIdentities = markedApplicationIdentities.filter(availableIdentities.contains)
+    guard retainedIdentities != markedApplicationIdentities else {
+      return false
+    }
+    markedApplicationIdentities = retainedIdentities
+    return true
+  }
+
+  private mutating func toggleMark() {
+    guard let application = state.selectedApplication else {
+      statusMessage = state.query.isEmpty ? "没有可标记的应用" : "当前筛选没有匹配"
+      return
+    }
+
+    if let index = markedApplicationIdentities.firstIndex(of: application.id) {
+      markedApplicationIdentities.remove(at: index)
+      statusMessage = "已取消标记 “\(TerminalText.sanitize(application.name))”"
+    } else {
+      markedApplicationIdentities.append(application.id)
+      statusMessage = "已标记 “\(TerminalText.sanitize(application.name))”"
     }
   }
 
   private mutating func requestExit(_ action: ApplicationExitAction) -> PickerDecision {
-    guard let application = state.selectedApplication else {
-      statusMessage = state.query.isEmpty ? "没有可操作的应用" : "当前筛选没有匹配"
-      return .stay(redraw: true)
+    let applications: [ApplicationCandidate]
+    if markedApplicationIdentities.isEmpty {
+      guard let application = state.selectedApplication else {
+        statusMessage = state.query.isEmpty ? "没有可操作的应用" : "当前筛选没有匹配"
+        return .stay(redraw: true)
+      }
+      applications = [
+        latestApplications.first(where: { $0.id == application.id }) ?? application
+      ]
+    } else {
+      applications = markedApplicationIdentities.compactMap { identity in
+        latestApplications.first(where: { $0.id == identity })
+          ?? state.applications.first(where: { $0.id == identity })
+      }
+      guard !applications.isEmpty else {
+        statusMessage = "已标记的应用均已退出"
+        return .stay(redraw: true)
+      }
     }
 
-    let latestApplication =
-      latestApplications.first(where: { $0.id == application.id }) ?? application
-    let selection = ApplicationExitSelection(application: latestApplication, action: action)
-    phase = .confirming(PickerConfirmation(selection: selection))
+    let plan = ApplicationExitPlan(applications: applications, action: action)
+    phase = .confirming(PickerConfirmation(plan: plan))
     return .stay(redraw: true)
+  }
+
+  private func availableConfirmationPlan() -> ApplicationExitPlan? {
+    guard let confirmationPlan, !confirmationAvailableApplications.isEmpty else {
+      return nil
+    }
+    return ApplicationExitPlan(
+      applications: confirmationAvailableApplications,
+      action: confirmationPlan.action
+    )
   }
 }

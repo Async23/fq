@@ -214,23 +214,23 @@ enum TerminalPickerRenderer {
 
     if row == height {
       let line = bottomBorder(session: session, width: width)
-      let enterAction = session.defaultAction == .forceQuit ? "强退" : "退出"
       return commandMouseTarget(
         column: column,
         line: line,
         mappings: [
-          ("↵ \(enterAction)…", .enter),
-          ("↵ \(enterAction)", .enter),
-          ("t 退出…", .text("t")),
-          ("k 强退…", .text("k")),
+          ("Space 标记", .text(" ")),
+          ("↵ 操作", .enter),
+          ("t 退出", .text("t")),
+          ("K 强退", .text("K")),
           ("f 筛选", .text("f")),
-          ("F1/?/h 帮助", .help),
-          ("?/h 帮助", .help),
+          ("F1/?/H 帮助", .help),
+          ("?/H 帮助", .help),
           ("? 帮助", .help),
           ("q 关闭", .text("q")),
+          ("Space", .text(" ")),
           ("↵", .enter),
           ("t", .text("t")),
-          ("k", .text("k")),
+          ("K", .text("K")),
           ("?", .help),
           ("q", .text("q")),
         ]
@@ -308,6 +308,7 @@ enum TerminalPickerRenderer {
         column: column,
         line: line,
         mappings: [
+          ("Space", .text(" ")),
           ("↵", .enter),
           ("q", .text("q")),
         ]
@@ -365,7 +366,7 @@ enum TerminalPickerRenderer {
         ("esc", .escape),
         ("q", .escape),
         ("?", .escape),
-        ("h", .escape),
+        ("H", .escape),
         ("F1", .escape),
       ]
     )
@@ -584,6 +585,7 @@ enum TerminalPickerRenderer {
         tableLine(
           application: nil,
           selected: false,
+          marked: false,
           innerWidth: width - 2 - scrollbarWidth
         ) + (scrollbar == nil ? "" : "↑"),
         width: width,
@@ -611,6 +613,7 @@ enum TerminalPickerRenderer {
             tableLine(
               application: visible[index],
               selected: index == selectedIndex,
+              marked: session.isMarked(visible[index]),
               innerWidth: width - 2 - TerminalText.displayWidth(scrollbarCell)
             ) + scrollbarCell,
             width: width,
@@ -663,9 +666,12 @@ enum TerminalPickerRenderer {
     let refresh = session.isPaused ? "已暂停" : "实时"
     return [
       "fq · \(action) · \(sort) · \(refresh)",
-      application.map { "> \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)" }
+      application.map {
+        let marker = session.isMarked($0) ? ">✓" : "> "
+        return "\(marker) \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)"
+      }
         ?? "没有匹配",
-      "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count) · ↑↓ · ↵ · q",
+      "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count) · hjkl · Space · ↵ · q",
     ]
   }
 
@@ -686,22 +692,45 @@ enum TerminalPickerRenderer {
       )
     }
 
-    let selection = session.confirmationSelection
-    let actionName = selection?.action == .quit ? "正常退出" : "强制退出"
-    let application = selection?.application
+    let plan = session.confirmationPlan
+    let applications = plan?.applications ?? []
+    let application = applications.first
+    let isBatch = applications.count > 1
+    let baseActionName = plan?.action == .quit ? "正常退出" : "强制退出"
+    let actionName = isBatch ? "批量\(baseActionName)" : baseActionName
     let isAvailable = session.isConfirmationTargetAvailable
-    let isForceQuit = selection?.action == .forceQuit
-    let name = TerminalText.sanitize(application?.name ?? "未知应用")
-    let identity =
-      application.map { "PID \($0.processIdentifier) · \($0.bundleIdentifier ?? "无 Bundle ID")" }
-      ?? "应用已不可用"
+    let isForceQuit = plan?.action == .forceQuit
+    let subject =
+      isBatch
+      ? "\(applications.count) 个应用"
+      : TerminalText.sanitize(application?.name ?? "未知应用")
+    let identity: String
+    if isBatch {
+      identity = applications.map { TerminalText.sanitize($0.name) }.joined(separator: "、")
+    } else {
+      identity =
+        application.map { "PID \($0.processIdentifier) · \($0.bundleIdentifier ?? "无 Bundle ID")" }
+        ?? "应用已不可用"
+    }
     let warning: String
     if !isAvailable {
-      warning = "目标应用已经退出或不再可用；fq 不会发送退出请求。"
+      warning =
+        isBatch
+        ? "所有目标应用都已退出或不再可用；fq 不会发送请求。"
+        : "目标应用已经退出或不再可用；fq 不会发送退出请求。"
+    } else if session.unavailableConfirmationTargetCount > 0 {
+      warning =
+        "其中 \(session.unavailableConfirmationTargetCount) 个目标已退出；只会处理剩余 \(session.confirmationAvailableApplications.count) 个。"
+    } else if isForceQuit, isBatch, applications.contains(where: \.isFinder) {
+      warning = "这些应用中未保存的内容可能会丢失；Finder 将由 macOS 自动重新打开。"
+    } else if isForceQuit, isBatch {
+      warning = "这些应用中未保存的内容可能会丢失。"
     } else if isForceQuit, application?.isFinder == true {
       warning = "Finder 会被强制退出，并由 macOS 自动重新打开。"
     } else if isForceQuit {
       warning = "此应用中未保存的内容可能会丢失。"
+    } else if isBatch {
+      warning = "fq 会逐个请求应用正常退出；应用可以拒绝或显示保存提示。"
     } else {
       warning = "fq 会请求应用正常退出；应用可以拒绝或显示保存提示。"
     }
@@ -709,7 +738,7 @@ enum TerminalPickerRenderer {
     let warningStyle: ContentStyle = !isAvailable || isForceQuit ? .warning : .normal
     let content = [
       (actionName, isForceQuit ? ContentStyle.warning : ContentStyle.accent),
-      (name, ContentStyle.accent),
+      (subject, ContentStyle.accent),
       (identity, ContentStyle.normal),
       ("", ContentStyle.normal),
       (warning, warningStyle),
@@ -755,17 +784,26 @@ enum TerminalPickerRenderer {
     height: Int,
     width: Int
   ) -> CompactConfirmationLayout {
-    let selection = session.confirmationSelection
-    let actionName = selection?.action == .quit ? "正常退出" : "强制退出"
-    let name = TerminalText.sanitize(selection?.application.name ?? "未知应用")
-    let title = "\(actionName) · \(name)"
+    let plan = session.confirmationPlan
+    let applications = plan?.applications ?? []
+    let isBatch = applications.count > 1
+    let baseActionName = plan?.action == .quit ? "正常退出" : "强制退出"
+    let actionName = isBatch ? "批量\(baseActionName)" : baseActionName
+    let subject =
+      isBatch
+      ? "\(applications.count) 个应用"
+      : TerminalText.sanitize(applications.first?.name ?? "未知应用")
+    let title = "\(actionName) · \(subject)"
     let buttons = compactConfirmationButtons(session: session, width: width)
     let warning: String
     if !session.isConfirmationTargetAvailable {
       warning = "目标已退出 · 不会发送请求"
-    } else if selection?.action == .forceQuit, selection?.application.isFinder == true {
+    } else if session.unavailableConfirmationTargetCount > 0 {
+      warning =
+        "跳过 \(session.unavailableConfirmationTargetCount) 个 · 处理 \(session.confirmationAvailableApplications.count) 个"
+    } else if plan?.action == .forceQuit, applications.contains(where: \.isFinder) {
       warning = "Finder 将由 macOS 自动重新打开"
-    } else if selection?.action == .forceQuit {
+    } else if plan?.action == .forceQuit {
       warning = "未保存的内容可能会丢失"
     } else {
       warning = "应用可以拒绝或显示保存提示"
@@ -851,7 +889,7 @@ enum TerminalPickerRenderer {
     let defaultAction = session.defaultAction == .forceQuit ? "强制退出" : "正常退出"
     let full: [(String, ContentStyle)] = [
       ("导航", .accent),
-      ("↑/↓ 或 Ctrl-P/Ctrl-N  移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
+      ("h/j/k/l 或方向键  排序/移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
       ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
       ("长列表右侧 ↑/↓ 翻页 · 点击轨迹跳转 · 拖动滑块滚动", .normal),
       ("列表", .accent),
@@ -861,24 +899,25 @@ enum TerminalPickerRenderer {
       ("f 或 /  编辑 · ←/→/Home/End  移动光标", .normal),
       ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原筛选与选择", .normal),
       ("操作", .accent),
-      ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
+      ("Space  标记/取消 · Enter  \(defaultAction) · t  正常退出 · K  强制退出", .normal),
+      ("有标记时对整组执行；没有标记时只操作当前行。", .normal),
       ("动作面板默认选择取消；←/→/Tab 切换，Enter/Space 执行所选；Y 直接执行，N 返回。", .warning),
-      ("F1、? 或 h  帮助 · q/Esc/Ctrl-C  取消 · Ctrl-Z  挂起，fg 返回", .normal),
+      ("F1、? 或 H  帮助 · q/Esc/Ctrl-C  取消 · Ctrl-Z  挂起，fg 返回", .normal),
     ]
     let condensed: [(String, ContentStyle)] = [
-      ("导航  ↑/↓ 移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
+      ("导航  hjkl/方向键 排序与移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
       ("鼠标 滚轮浏览 · 单击选择/再点动作 · 滚动条点击/拖动", .normal),
       ("列表  ←/→ 切换排序 · r 反向 · u 暂停/继续", .normal),
       ("筛选  f 或 / 编辑 · ←/→/Home/End 移动光标", .normal),
       ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),
-      ("操作  Enter \(defaultAction) · t 正常退出 · k 强制退出", .normal),
+      ("操作  Space 标记 · Enter \(defaultAction) · t 正常退出 · K 强制退出", .normal),
       ("默认取消 · ←→/Tab 切换 · ↵/Space 确认 · Y 执行 · N 返回", .warning),
-      ("F1/?/h 帮助 · q/Esc/Ctrl-C 取消 · Ctrl-Z 挂起，fg 返回", .normal),
+      ("F1/?/H 帮助 · q/Esc/Ctrl-C 取消 · Ctrl-Z 挂起，fg 返回", .normal),
     ]
     let terse: [(String, ContentStyle)] = [
-      ("↑↓/滚轮 选择 · ←→ 排序", .accent),
+      ("hjkl/方向键 选择与排序", .accent),
       ("f/ 筛选 · u 暂停 · r 反向", .normal),
-      ("↵ \(defaultAction) · t 退出 · k 强退", .normal),
+      ("Space 标记 · ↵ 操作 · t 退出 · K 强退", .normal),
       ("默认取消 · Y 执行 · N/Esc 返回", .warning),
     ]
     let capacity = max(0, height - 2)
@@ -891,7 +930,7 @@ enum TerminalPickerRenderer {
     return terse
   }
 
-  private static let helpFooter = "F1 / ? / h / q / esc  返回"
+  private static let helpFooter = "F1 / ? / H / q / esc  返回"
 
   private static func compactHelpLayout(height: Int) -> CompactHelpLayout {
     let returnLabel = "q/Esc 返回"
@@ -911,7 +950,7 @@ enum TerminalPickerRenderer {
     }
     if height == 3 {
       return CompactHelpLayout(
-        lines: ["fq 帮助", "↑↓ · f · ↵", returnLabel],
+        lines: ["fq 帮助", "hjkl · Space · t/K", returnLabel],
         returnLabel: returnLabel,
         returnRow: 3
       )
@@ -919,8 +958,8 @@ enum TerminalPickerRenderer {
     return CompactHelpLayout(
       lines: [
         "fq 帮助",
-        "↑↓/滚轮 · ←→排序",
-        "f 筛选 · ↵ 动作",
+        "hjkl/方向键 · Space 标记",
+        "f 筛选 · ↵/t/K 操作",
         returnLabel,
       ],
       returnLabel: returnLabel,
@@ -1059,17 +1098,19 @@ enum TerminalPickerRenderer {
         "─ ",
       ]
     } else {
-      let enterAction = session.defaultAction == .forceQuit ? "强退" : "退出"
       actions = [
-        "─ ↑↓ 选择 │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ f 筛选 │ F1/?/h 帮助 │ q 关闭 ",
-        "─ ↑↓ │ ↵ \(enterAction)… │ t 退出… │ k 强退… │ ? │ q ",
-        "─ ↑↓ │ ↵ \(enterAction) │ t/k │ q ",
-        "─ ↑↓ │ ↵ │ q ",
+        "─ ↑↓/jk 选择 │ Space 标记 │ ↵ 操作 │ t 退出 │ K 强退 │ f 筛选 │ ? 帮助 │ q 关闭 ",
+        "─ ↑↓/jk │ Space 标记 │ ↵ 操作 │ t 退出 │ K 强退 │ ? │ q ",
+        "─ jk │ Space │ ↵ │ t/K │ q ",
+        "─ jk │ Space │ q ",
         "─ ",
       ]
     }
 
-    let trailing = " \(location) ─"
+    let marked =
+      session.markedApplicationIdentities.isEmpty
+      ? "" : "已选 \(session.markedApplicationIdentities.count) · "
+    let trailing = " \(marked)\(location) ─"
     let leading =
       actions.first(where: {
         TerminalText.displayWidth($0) + TerminalText.displayWidth(trailing) <= width - 2
@@ -1109,7 +1150,11 @@ enum TerminalPickerRenderer {
       baseRight = "\(visibleCount) 个匹配 · del 清除"
     }
 
-    let right = session.isPaused ? "已暂停 · \(baseRight)" : baseRight
+    let marked =
+      session.markedApplicationIdentities.isEmpty
+      ? "" : "已选 \(session.markedApplicationIdentities.count) · "
+    let rightBase = marked + baseRight
+    let right = session.isPaused ? "已暂停 · \(rightBase)" : rightBase
     return fit(left: left, right: right, width: width)
   }
 
@@ -1172,9 +1217,12 @@ enum TerminalPickerRenderer {
   private static func tableLine(
     application: ApplicationCandidate?,
     selected: Bool,
+    marked: Bool,
     innerWidth: Int
   ) -> String {
-    let marker = application == nil ? "  " : (selected ? "› " : "  ")
+    let marker =
+      application == nil
+      ? "  " : "\(selected ? "›" : " ")\(marked ? "✓" : " ")"
     let pid = application.map { String($0.processIdentifier) } ?? "PID"
     let name = application.map { TerminalText.sanitize($0.name) } ?? "应用"
     let bundle =

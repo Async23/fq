@@ -9,7 +9,7 @@ protocol ApplicationPicking: AnyObject {
     initialQuery: String,
     action: ApplicationExitAction,
     refreshApplications: () -> [ApplicationCandidate]
-  ) throws -> ApplicationExitSelection?
+  ) throws -> ApplicationExitPlan?
 }
 
 enum TerminalPickerError: LocalizedError {
@@ -204,7 +204,7 @@ final class TerminalPicker: ApplicationPicking {
     initialQuery: String,
     action: ApplicationExitAction,
     refreshApplications: () -> [ApplicationCandidate]
-  ) throws -> ApplicationExitSelection? {
+  ) throws -> ApplicationExitPlan? {
     guard isatty(inputFileDescriptor) == 1, isatty(outputFileDescriptor) == 1 else {
       throw TerminalPickerError.notATerminal
     }

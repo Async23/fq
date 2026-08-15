@@ -62,6 +62,33 @@ final class FQCommandTests: XCTestCase {
     XCTAssertTrue(manager.requests.isEmpty)
   }
 
+  func testBatchContinuesAfterFailureAndExecutesTheActiveApplicationLast() {
+    let active = candidate(pid: 10, name: "Ghostty", isActive: true)
+    let rejected = candidate(pid: 20, name: "Rejected")
+    let other = candidate(pid: 30, name: "Preview")
+    let manager = FakeApplicationManager(
+      applications: [active, rejected, other],
+      rejectedProcessIdentifiers: [rejected.processIdentifier]
+    )
+    let console = FakeConsole()
+    let command = FQCommand(
+      applicationManager: manager,
+      picker: FakePicker(
+        selections: [active, rejected, other],
+        selectedAction: .forceQuit
+      ),
+      console: console
+    )
+
+    XCTAssertEqual(command.run(arguments: []), 1)
+    XCTAssertEqual(
+      manager.requests.map(\.application),
+      [rejected, other, active]
+    )
+    XCTAssertTrue(console.standardOutput.contains("批量操作完成：成功 2 个，失败 1 个。"))
+    XCTAssertTrue(console.standardError.contains("“Rejected”"))
+  }
+
   func testListModeDoesNotRequireATerminalOrInvokePicker() {
     let application = candidate(
       pid: 42,
@@ -116,14 +143,17 @@ final class FQCommandTests: XCTestCase {
 private final class FakeApplicationManager: ApplicationManaging {
   let applications: [ApplicationCandidate]
   let outcome: ApplicationExitOutcome
+  let rejectedProcessIdentifiers: Set<Int32>
   var requests: [ExitRequest] = []
 
   init(
     applications: [ApplicationCandidate],
-    outcome: ApplicationExitOutcome = .terminated
+    outcome: ApplicationExitOutcome = .terminated,
+    rejectedProcessIdentifiers: Set<Int32> = []
   ) {
     self.applications = applications
     self.outcome = outcome
+    self.rejectedProcessIdentifiers = rejectedProcessIdentifiers
   }
 
   func runningApplications() -> [ApplicationCandidate] {
@@ -135,13 +165,16 @@ private final class FakeApplicationManager: ApplicationManaging {
     action: ApplicationExitAction
   ) throws -> ApplicationExitOutcome {
     requests.append(ExitRequest(application: application, action: action))
+    if rejectedProcessIdentifiers.contains(application.processIdentifier) {
+      throw ApplicationManagerError.requestRejected(application.name)
+    }
     return outcome
   }
 }
 
 @MainActor
 private final class FakePicker: ApplicationPicking {
-  let selection: ApplicationExitSelection?
+  let selection: ApplicationExitPlan?
   var chooseCallCount = 0
   var receivedActions: [ApplicationExitAction] = []
 
@@ -150,8 +183,15 @@ private final class FakePicker: ApplicationPicking {
     selectedAction: ApplicationExitAction = .forceQuit
   ) {
     self.selection = selection.map {
-      ApplicationExitSelection(application: $0, action: selectedAction)
+      ApplicationExitPlan(applications: [$0], action: selectedAction)
     }
+  }
+
+  init(
+    selections: [ApplicationCandidate],
+    selectedAction: ApplicationExitAction
+  ) {
+    selection = ApplicationExitPlan(applications: selections, action: selectedAction)
   }
 
   func choose(
@@ -159,7 +199,7 @@ private final class FakePicker: ApplicationPicking {
     initialQuery: String,
     action: ApplicationExitAction,
     refreshApplications: () -> [ApplicationCandidate]
-  ) throws -> ApplicationExitSelection? {
+  ) throws -> ApplicationExitPlan? {
     chooseCallCount += 1
     receivedActions.append(action)
     return selection
@@ -197,7 +237,8 @@ private struct ExitRequest: Equatable {
 private func candidate(
   pid: Int32,
   name: String,
-  bundleIdentifier: String? = nil
+  bundleIdentifier: String? = nil,
+  isActive: Bool = false
 ) -> ApplicationCandidate {
   ApplicationCandidate(
     id: ApplicationIdentity(
@@ -205,6 +246,7 @@ private func candidate(
       bundleIdentifier: bundleIdentifier,
       launchDate: nil
     ),
-    name: name
+    name: name,
+    isActive: isActive
   )
 }

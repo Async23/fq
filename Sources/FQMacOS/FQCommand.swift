@@ -96,9 +96,9 @@ public final class FQCommand {
       return 1
     }
 
-    let selection: ApplicationExitSelection?
+    let plan: ApplicationExitPlan?
     do {
-      selection = try picker.choose(
+      plan = try picker.choose(
         from: applications,
         initialQuery: query,
         action: action,
@@ -109,28 +109,48 @@ public final class FQCommand {
       return 1
     }
 
-    guard let selection else {
+    guard let plan else {
       console.write("已取消。\n")
       return 0
     }
 
-    do {
-      let outcome = try applicationManager.requestExit(
-        selection.application,
-        action: selection.action
-      )
-      console.write(
-        successMessage(
-          for: selection.application,
-          action: selection.action,
-          outcome: outcome
-        ) + "\n"
-      )
-      return 0
-    } catch {
-      console.writeError("fq: \(TerminalText.sanitize(error.localizedDescription))\n")
-      return 1
+    var successCount = 0
+    var failureCount = 0
+    for application in executionOrder(for: plan.applications) {
+      do {
+        let outcome = try applicationManager.requestExit(
+          application,
+          action: plan.action
+        )
+        console.write(
+          successMessage(
+            for: application,
+            action: plan.action,
+            outcome: outcome
+          ) + "\n"
+        )
+        successCount += 1
+      } catch {
+        console.writeError("fq: \(TerminalText.sanitize(error.localizedDescription))\n")
+        failureCount += 1
+      }
     }
+
+    if plan.applications.count > 1 {
+      console.write("批量操作完成：成功 \(successCount) 个，失败 \(failureCount) 个。\n")
+    }
+    return failureCount == 0 ? 0 : 1
+  }
+
+  private func executionOrder(
+    for applications: [ApplicationCandidate]
+  ) -> [ApplicationCandidate] {
+    applications.enumerated().sorted { lhs, rhs in
+      if lhs.element.isActive != rhs.element.isActive {
+        return !lhs.element.isActive
+      }
+      return lhs.offset < rhs.offset
+    }.map(\.element)
   }
 
   private func successMessage(
@@ -168,19 +188,21 @@ public final class FQCommand {
       -V, --version           显示版本
 
     选择器按键：
-      ↑ / ↓，PgUp / PgDn      移动选择；Home / End 跳转
-      ← / →，r                切换排序字段 / 反转排序
+      j / k 或 ↑ / ↓           移动选择；Home / End、PgUp / PgDn 快速移动
+      h / l 或 ← / →，r        切换排序字段 / 反转排序
       u                       暂停 / 恢复实时应用列表
       f 或 /                   进入筛选
       筛选中 ←/→，Home/End     移动光标；Backspace/Delete 删除
-      Enter                   打开当前模式的动作面板
-      t / k                   打开正常退出 / 强制退出动作
+      Space                   标记 / 取消标记当前应用
+      Enter                   打开默认动作面板
+      t / K                   打开正常退出 / 强制退出动作
       Ctrl-U；浏览中 Delete    清空筛选
       鼠标                     滚轮浏览；滚动条可点击或拖动；可见控件可点
-      ? / h                   查看选择器内帮助
+      ? / H                   查看选择器内帮助
       Ctrl-Z                  挂起 fq；用 fg 返回当前界面
       q / Esc / Ctrl-C        取消
 
+    有标记时，Enter、t 或 K 会对整组应用执行同一个动作；没有标记时只操作当前行。
     动作面板默认选中取消；用 ← / → 或 Tab 切换，再按 Enter 执行所选项。
     应用列表会自动刷新，并按进程身份保留当前选择与确认目标。
     fq 只显示 macOS 认定为普通 GUI 应用的进程，不显示守护进程和大多数菜单栏工具。
