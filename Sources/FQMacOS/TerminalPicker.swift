@@ -175,7 +175,8 @@ final class TerminalPicker: ApplicationPicking {
   private static let enterInterface =
     "\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1002h\u{001B}[?1006h\u{001B}[?2004h"
   private static let leaveInterface =
-    "\u{001B}[?2004l\u{001B}[?1006l\u{001B}[?1002l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
+    TerminalOutputFrame.endSynchronizedUpdate
+    + "\u{001B}[?2004l\u{001B}[?1006l\u{001B}[?1002l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
 
   private let inputFileDescriptor: Int32
   private let outputFileDescriptor: Int32
@@ -647,14 +648,14 @@ final class TerminalPicker: ApplicationPicking {
     dimensions: TerminalDimensions,
     clearScreen: Bool
   ) {
-    write(
+    let content =
       TerminalPickerRenderer.render(
         session: session,
         dimensions: dimensions,
         colorEnabled: colorEnabled,
         clearScreen: clearScreen
       )
-    )
+    write(TerminalOutputFrame.synchronized(content))
   }
 
   private func write(_ text: String) {
