@@ -719,9 +719,7 @@ enum TerminalPickerRenderer {
     return overlayFrame(
       title: "操作确认",
       content: content,
-      footer: isAvailable
-        ? "←→/tab 选择 │ Enter/点击 执行 │ Esc 返回"
-        : "Enter/Esc 返回 │ ctrl-c 取消",
+      footer: confirmationFooter(session: session, width: width),
       height: height,
       width: width,
       colorEnabled: colorEnabled
@@ -730,6 +728,26 @@ enum TerminalPickerRenderer {
 
   private static func usesFullConfirmation(height: Int, width: Int) -> Bool {
     height >= 8 && width >= 26
+  }
+
+  private static func confirmationFooter(session: PickerSession, width: Int) -> String {
+    let candidates =
+      session.isConfirmationTargetAvailable
+      ? [
+        "←→/Tab 选择 │ Enter/Space 执行所选 │ Y 执行 │ N/Esc 返回",
+        "←→/Tab │ Enter/Space 确认 │ Y 执行 │ N/Esc 返回",
+        "Y 执行 │ N/Esc 返回",
+        "Esc 返回",
+      ]
+      : [
+        "目标已退出 │ Enter/Space/N/Esc 返回 │ Ctrl-C 取消",
+        "Enter/Space/N/Esc 返回",
+        "N/Esc 返回",
+        "Esc 返回",
+      ]
+    let availableWidth = max(0, width - 6)
+    return candidates.first(where: { TerminalText.displayWidth($0) <= availableWidth })
+      ?? "返回"
   }
 
   private static func compactConfirmationLayout(
@@ -844,7 +862,7 @@ enum TerminalPickerRenderer {
       ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原筛选与选择", .normal),
       ("操作", .accent),
       ("Enter  \(defaultAction)菜单 · t  正常退出菜单 · k  强制退出菜单", .normal),
-      ("动作面板默认选择取消；←/→/Tab 切换，Enter 执行所选。", .warning),
+      ("动作面板默认选择取消；←/→/Tab 切换，Enter/Space 执行所选；Y 直接执行，N 返回。", .warning),
       ("F1、? 或 h  帮助 · q/Esc/Ctrl-C  取消 · Ctrl-Z  挂起，fg 返回", .normal),
     ]
     let condensed: [(String, ContentStyle)] = [
@@ -854,14 +872,14 @@ enum TerminalPickerRenderer {
       ("筛选  f 或 / 编辑 · ←/→/Home/End 移动光标", .normal),
       ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),
       ("操作  Enter \(defaultAction) · t 正常退出 · k 强制退出", .normal),
-      ("确认默认选择取消；←/→/Tab 切换，Enter 执行。", .warning),
+      ("默认取消 · ←→/Tab 切换 · ↵/Space 确认 · Y 执行 · N 返回", .warning),
       ("F1/?/h 帮助 · q/Esc/Ctrl-C 取消 · Ctrl-Z 挂起，fg 返回", .normal),
     ]
     let terse: [(String, ContentStyle)] = [
       ("↑↓/滚轮 选择 · ←→ 排序", .accent),
       ("f/ 筛选 · u 暂停 · r 反向", .normal),
       ("↵ \(defaultAction) · t 退出 · k 强退", .normal),
-      ("确认默认取消 · q/Esc 返回", .warning),
+      ("默认取消 · Y 执行 · N/Esc 返回", .warning),
     ]
     let capacity = max(0, height - 2)
     if width >= 88, capacity >= full.count {

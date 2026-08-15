@@ -13,6 +13,7 @@ enum PickerConfirmationChoice: Equatable {
 struct PickerConfirmation: Equatable {
   let selection: ApplicationExitSelection
   var choice: PickerConfirmationChoice = .cancel
+  var isDirectExecutionArmed = false
 }
 
 struct PickerFilterEdit: Equatable {
@@ -127,6 +128,7 @@ enum PickerEvent: Equatable {
   case deleteForward
   case clear
   case redraw
+  case inputIdle
   case help
   case text(String)
 }
@@ -231,7 +233,8 @@ struct PickerSession {
           application: refreshedApplication,
           action: confirmation.selection.action
         ),
-        choice: confirmation.choice
+        choice: confirmation.choice,
+        isDirectExecutionArmed: confirmation.isDirectExecutionArmed
       )
       if refreshedConfirmation != confirmation {
         phase = .confirming(refreshedConfirmation)
@@ -268,6 +271,12 @@ struct PickerSession {
     }
     if case .redraw = event {
       return .stay(redraw: true)
+    }
+    if case .inputIdle = event {
+      guard case .confirming(let confirmation) = phase else {
+        return .stay(redraw: false)
+      }
+      return handleConfirmation(event, confirmation: confirmation)
     }
     statusMessage = nil
 
@@ -335,7 +344,7 @@ struct PickerSession {
       }
     case .help:
       phase = .help
-    case .interrupt, .suspend, .redraw:
+    case .interrupt, .suspend, .redraw, .inputIdle:
       return .stay(redraw: false)
     }
 
@@ -353,7 +362,7 @@ struct PickerSession {
     case .move(let offset) where offset == 1:
       phase = .browse
       state.moveSelection(by: offset)
-    case .move, .positionViewport, .cycleFocus, .chooseConfirmation, .help:
+    case .move, .positionViewport, .cycleFocus, .chooseConfirmation, .help, .inputIdle:
       return .stay(redraw: false)
     case .moveHorizontal(let offset):
       guard updatedEdit.moveCursor(by: offset, in: state.query) else {
@@ -410,12 +419,25 @@ struct PickerSession {
     confirmation: PickerConfirmation
   ) -> PickerDecision {
     switch event {
-    case .enter:
+    case .enter, .text(" "):
       guard confirmation.choice == .execute, isConfirmationTargetAvailable else {
         phase = .browse
         return .stay(redraw: true)
       }
       return .select(confirmation.selection)
+    case .text("y"), .text("Y"):
+      guard confirmation.isDirectExecutionArmed, isConfirmationTargetAvailable else {
+        return .stay(redraw: false)
+      }
+      return .select(confirmation.selection)
+    case .inputIdle:
+      guard !confirmation.isDirectExecutionArmed else {
+        return .stay(redraw: false)
+      }
+      var updated = confirmation
+      updated.isDirectExecutionArmed = true
+      phase = .confirming(updated)
+      return .stay(redraw: false)
     case .moveHorizontal, .cycleFocus:
       guard isConfirmationTargetAvailable else {
         return .stay(redraw: false)
@@ -434,7 +456,7 @@ struct PickerSession {
       return .select(confirmation.selection)
     case .move, .positionViewport:
       return .stay(redraw: false)
-    case .escape, .text("n"), .text("N"), .text("q"):
+    case .escape, .backspace, .text("n"), .text("N"), .text("q"):
       phase = .browse
       return .stay(redraw: true)
     default:

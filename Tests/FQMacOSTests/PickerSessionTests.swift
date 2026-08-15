@@ -84,6 +84,40 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.confirmationChoice, .cancel)
   }
 
+  func testConfirmationSupportsBtopYesNoSpaceAndBackspaceKeys() {
+    let expectedSelection = ApplicationExitSelection(
+      application: applications[0],
+      action: .forceQuit
+    )
+
+    var yesSession = makeSession(defaultAction: .forceQuit)
+    _ = yesSession.handle(.enter)
+    XCTAssertEqual(yesSession.handle(.text("Y")), .stay(redraw: false))
+    _ = yesSession.handle(.inputIdle)
+    XCTAssertEqual(yesSession.handle(.text("Y")), .select(expectedSelection))
+
+    var spaceSession = makeSession(defaultAction: .forceQuit)
+    _ = spaceSession.handle(.enter)
+    XCTAssertEqual(spaceSession.handle(.text(" ")), .stay(redraw: true))
+    XCTAssertEqual(spaceSession.phase, .browse)
+    _ = spaceSession.handle(.enter)
+    _ = spaceSession.handle(.moveHorizontal(1))
+    XCTAssertEqual(spaceSession.handle(.text(" ")), .select(expectedSelection))
+
+    for cancelEvent in [PickerEvent.text("n"), .text("N"), .backspace] {
+      var cancelSession = makeSession(defaultAction: .forceQuit)
+      _ = cancelSession.handle(.enter)
+      XCTAssertEqual(cancelSession.handle(cancelEvent), .stay(redraw: true))
+      XCTAssertEqual(cancelSession.phase, .browse)
+    }
+
+    var unavailableSession = makeSession(defaultAction: .forceQuit)
+    _ = unavailableSession.handle(.enter)
+    _ = unavailableSession.handle(.inputIdle)
+    _ = unavailableSession.replaceApplications(Array(applications.dropFirst()))
+    XCTAssertEqual(unavailableSession.handle(.text("y")), .stay(redraw: false))
+  }
+
   func testActionShortcutsFollowBtopTerminateAndKillKeys() {
     var terminateSession = makeSession(defaultAction: .forceQuit)
     XCTAssertEqual(
@@ -230,6 +264,8 @@ final class PickerSessionTests: XCTestCase {
 
     XCTAssertEqual(session.phase, .browse)
     XCTAssertEqual(session.state.query, "")
+    XCTAssertEqual(session.statusMessage, "筛选请先按 f 或 /")
+    _ = session.handle(.inputIdle)
     XCTAssertEqual(session.statusMessage, "筛选请先按 f 或 /")
 
     _ = session.handle(.text("/"))

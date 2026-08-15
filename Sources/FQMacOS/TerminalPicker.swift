@@ -250,6 +250,7 @@ final class TerminalPicker: ApplicationPicking {
       } else if let inputEvent = try readEvent(session: session, dimensions: dimensions) {
         event = inputEvent
       } else {
+        _ = session.handle(.inputIdle)
         var redraw = false
         var clearScreen = false
         let nextDimensions = terminalDimensions()

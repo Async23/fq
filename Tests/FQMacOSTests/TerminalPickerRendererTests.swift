@@ -111,7 +111,8 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("Finder"))
     XCTAssertTrue(output.contains("由 macOS 自动重新打开"))
     XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
-    XCTAssertTrue(output.contains("←→/tab 选择 │ Enter/点击 执行"))
+    XCTAssertTrue(output.contains("←→/Tab 选择 │ Enter/Space 执行所选"))
+    XCTAssertTrue(output.contains("Y 执行 │ N/Esc 返回"))
   }
 
   func testHelpViewDocumentsBtopStyleCommands() {
@@ -130,6 +131,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("Backspace/Delete  删除"))
     XCTAssertTrue(output.contains("t  正常退出菜单 · k  强制退出菜单"))
     XCTAssertTrue(output.contains("默认选择取消"))
+    XCTAssertTrue(output.contains("Enter/Space 执行所选；Y 直接执行，N 返回"))
     XCTAssertTrue(output.contains("F1、? 或 h  帮助"))
     XCTAssertTrue(output.contains("Ctrl-Z  挂起，fg 返回"))
   }
@@ -145,13 +147,14 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertEqual(renderedLines(common).count, 16)
 
     let condensed = render(session, rows: 10, columns: 60)
-    XCTAssertTrue(condensed.contains("确认默认选择取消"))
+    XCTAssertTrue(condensed.contains("默认取消 · ←→/Tab 切换"))
+    XCTAssertTrue(condensed.contains("↵/Space 确认 · Y 执行 · N 返回"))
     XCTAssertTrue(condensed.contains("q/Esc/Ctrl-C 取消"))
     XCTAssertTrue(condensed.contains("Ctrl-Z 挂起，fg 返回"))
     XCTAssertEqual(renderedLines(condensed).count, 10)
 
     let terse = render(session, rows: 6, columns: 40)
-    XCTAssertTrue(terse.contains("确认默认取消 · q/Esc 返回"))
+    XCTAssertTrue(terse.contains("默认取消 · Y 执行 · N/Esc 返回"))
     XCTAssertEqual(renderedLines(terse).count, 6)
 
     let singleLineDimensions = TerminalDimensions(rows: 1, columns: 10)
@@ -696,7 +699,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("目标应用已经退出或不再可用"))
     XCTAssertTrue(output.contains("fq 不会发送退出请求"))
     XCTAssertTrue(output.contains("▸ [ 返回 ] ◂"))
-    XCTAssertTrue(output.contains("Enter/Esc 返回"))
+    XCTAssertTrue(output.contains("Enter/Space/N/Esc 返回"))
     XCTAssertFalse(output.contains("[ 执行 ]"))
   }
 
