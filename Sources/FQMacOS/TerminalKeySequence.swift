@@ -13,6 +13,14 @@ enum TerminalSpecialKey: Equatable {
 }
 
 enum TerminalKeySequence {
+  static func isBracketedPasteStart(
+    parameters: String,
+    intermediates: String = "",
+    final: UInt8
+  ) -> Bool {
+    intermediates.isEmpty && parameters == "200" && final == 126
+  }
+
   static func ss3(final: UInt8) -> TerminalSpecialKey? {
     switch final {
     case 65:

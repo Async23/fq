@@ -131,6 +131,7 @@ enum PickerEvent: Equatable {
   case inputIdle
   case help
   case text(String)
+  case paste(String)
 }
 
 enum PickerDecision: Equatable {
@@ -342,6 +343,8 @@ struct PickerSession {
       default:
         statusMessage = "筛选请先按 f 或 /"
       }
+    case .paste:
+      statusMessage = "粘贴筛选请先按 f 或 /"
     case .help:
       phase = .help
     case .interrupt, .suspend, .redraw, .inputIdle:
@@ -405,6 +408,14 @@ struct PickerSession {
       phase = .filtering(updatedEdit)
     case .text(let text):
       state.replaceQuery(updatedEdit.inserting(text, into: state.query))
+      viewportStartIndex = 0
+      phase = .filtering(updatedEdit)
+    case .paste(let text):
+      let normalizedText = normalizedPastedText(text)
+      guard !normalizedText.isEmpty else {
+        return .stay(redraw: false)
+      }
+      state.replaceQuery(updatedEdit.inserting(normalizedText, into: state.query))
       viewportStartIndex = 0
       phase = .filtering(updatedEdit)
     case .interrupt, .suspend, .redraw:
@@ -472,6 +483,23 @@ struct PickerSession {
     default:
       return .stay(redraw: false)
     }
+  }
+
+  private func normalizedPastedText(_ text: String) -> String {
+    var result = ""
+    var previousWasWhitespace = false
+    for character in TerminalText.sanitize(text) {
+      if character.isWhitespace {
+        if !previousWasWhitespace {
+          result.append(" ")
+        }
+        previousWasWhitespace = true
+      } else {
+        result.append(character)
+        previousWasWhitespace = false
+      }
+    }
+    return result
   }
 
   private mutating func beginFiltering() {

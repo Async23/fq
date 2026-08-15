@@ -645,6 +645,16 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertEqual(session.state.query, "")
   }
 
+  func testBrowsePasteShowsAnExplicitFilterHint() {
+    var session = makeSession()
+    _ = session.handle(.paste("typora"))
+
+    let output = render(session, rows: 16, columns: 90)
+
+    XCTAssertTrue(output.contains("提示  粘贴筛选请先按 f 或 /"))
+    XCTAssertEqual(session.state.query, "")
+  }
+
   func testBrowseHeaderReflectsSortFieldAndReverseState() {
     var session = makeSession()
 

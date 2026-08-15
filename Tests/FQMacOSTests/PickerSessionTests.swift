@@ -173,6 +173,35 @@ final class PickerSessionTests: XCTestCase {
     }
   }
 
+  func testBracketedPasteIsAtomicAndSafeInBrowseMode() {
+    var session = makeSession(defaultAction: .forceQuit)
+
+    XCTAssertEqual(session.handle(.paste("typora keynote")), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
+    XCTAssertEqual(session.state.query, "")
+    XCTAssertNil(session.confirmationSelection)
+    XCTAssertEqual(session.statusMessage, "粘贴筛选请先按 f 或 /")
+  }
+
+  func testBracketedPasteNormalizesAndInsertsTextAtTheFilterCursor() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.text("f"))
+    _ = session.handle(.paste("  Ghostty\n\t访达  "))
+
+    XCTAssertEqual(session.state.query, " Ghostty 访达 ")
+    XCTAssertEqual(session.filterCursorOffset, 12)
+  }
+
+  func testBracketedPasteCannotConfirmAnArmedAction() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.enter)
+    _ = session.handle(.inputIdle)
+    let confirmation = session.phase
+
+    XCTAssertEqual(session.handle(.paste("y")), .stay(redraw: false))
+    XCTAssertEqual(session.phase, confirmation)
+  }
+
   func testFilterEditingAppliesLiveAndEscapeRestoresPreviousQuery() {
     var session = PickerSession(
       applications: applications,

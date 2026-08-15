@@ -17,6 +17,8 @@ enum TerminalPickerError: LocalizedError {
   case terminalSetupFailed(Int32)
   case signalSetupFailed(Int32)
   case terminalReadFailed(Int32)
+  case terminalPasteIncomplete
+  case terminalPasteTooLarge
 
   var errorDescription: String? {
     switch self {
@@ -28,6 +30,10 @@ enum TerminalPickerError: LocalizedError {
       "无法安装终端信号监视（errno \(code)）。"
     case .terminalReadFailed(let code):
       "无法读取终端输入（errno \(code)）。"
+    case .terminalPasteIncomplete:
+      "终端粘贴数据不完整。"
+    case .terminalPasteTooLarge:
+      "终端粘贴数据超过 64 KiB 限制。"
     }
   }
 }
@@ -165,16 +171,19 @@ struct TerminalMouseInteraction {
 
 @MainActor
 final class TerminalPicker: ApplicationPicking {
+  private static let bracketedPasteTimeout: TimeInterval = 1
   private static let enterInterface =
-    "\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1002h\u{001B}[?1006h"
+    "\u{001B}[?1049h\u{001B}[?25l\u{001B}[?1002h\u{001B}[?1006h\u{001B}[?2004h"
   private static let leaveInterface =
-    "\u{001B}[?1006l\u{001B}[?1002l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
+    "\u{001B}[?2004l\u{001B}[?1006l\u{001B}[?1002l\u{001B}[0m\u{001B}[?25h\u{001B}[?1049l"
 
   private let inputFileDescriptor: Int32
   private let outputFileDescriptor: Int32
   private let colorEnabled: Bool
   private let refreshInterval: TimeInterval
   private var bufferedByte: UInt8?
+  private var bracketedPasteDecoder: TerminalBracketedPasteDecoder?
+  private var bracketedPasteDeadline: TimeInterval?
   private var mouseInteraction = TerminalMouseInteraction()
 
   init(
@@ -200,6 +209,7 @@ final class TerminalPicker: ApplicationPicking {
     }
 
     bufferedByte = nil
+    resetBracketedPaste()
     mouseInteraction.reset()
     var original = termios()
     guard tcgetattr(inputFileDescriptor, &original) == 0 else {
@@ -250,7 +260,9 @@ final class TerminalPicker: ApplicationPicking {
       } else if let inputEvent = try readEvent(session: session, dimensions: dimensions) {
         event = inputEvent
       } else {
-        _ = session.handle(.inputIdle)
+        if !isReadingBracketedPaste {
+          _ = session.handle(.inputIdle)
+        }
         var redraw = false
         var clearScreen = false
         let nextDimensions = terminalDimensions()
@@ -281,6 +293,7 @@ final class TerminalPicker: ApplicationPicking {
         return selection
       case .suspend:
         mouseInteraction.reset()
+        resetBracketedPaste()
         try deactivateInterface(restoring: &original)
         _ = Darwin.raise(SIGSTOP)
 
@@ -327,6 +340,7 @@ final class TerminalPicker: ApplicationPicking {
     signalMonitor: TerminalSignalMonitor
   ) -> Never {
     mouseInteraction.reset()
+    resetBracketedPaste()
     restoreInterfaceBestEffort(using: &mode)
     signalMonitor.stop()
     _ = Darwin.raise(signal)
@@ -337,6 +351,10 @@ final class TerminalPicker: ApplicationPicking {
     session: PickerSession,
     dimensions: TerminalDimensions
   ) throws -> PickerEvent? {
+    if isReadingBracketedPaste {
+      return try readBracketedPasteChunk()
+    }
+
     guard let first = try readByte() else {
       return nil
     }
@@ -427,6 +445,16 @@ final class TerminalPicker: ApplicationPicking {
       case 32...47:
         intermediates.append(Character(UnicodeScalar(byte)))
       case 64...126:
+        if TerminalKeySequence.isBracketedPasteStart(
+          parameters: parameters,
+          intermediates: intermediates,
+          final: byte
+        ) {
+          bracketedPasteDecoder = TerminalBracketedPasteDecoder()
+          bracketedPasteDeadline =
+            ProcessInfo.processInfo.systemUptime + Self.bracketedPasteTimeout
+          return try readBracketedPasteChunk()
+        }
         return TerminalKeySequence.csi(
           parameters: parameters,
           intermediates: intermediates,
@@ -444,6 +472,54 @@ final class TerminalPicker: ApplicationPicking {
       byte = next
     }
     return nil
+  }
+
+  private var isReadingBracketedPaste: Bool {
+    bracketedPasteDecoder != nil
+  }
+
+  private func readBracketedPasteChunk() throws -> PickerEvent? {
+    guard var decoder = bracketedPasteDecoder else {
+      return nil
+    }
+
+    while true {
+      if let deadline = bracketedPasteDeadline,
+        ProcessInfo.processInfo.systemUptime >= deadline
+      {
+        resetBracketedPaste()
+        throw TerminalPickerError.terminalPasteIncomplete
+      }
+
+      guard let byte = try readByte() else {
+        bracketedPasteDecoder = decoder
+        if let deadline = bracketedPasteDeadline,
+          ProcessInfo.processInfo.systemUptime >= deadline
+        {
+          resetBracketedPaste()
+          throw TerminalPickerError.terminalPasteIncomplete
+        }
+        return nil
+      }
+
+      bracketedPasteDeadline =
+        ProcessInfo.processInfo.systemUptime + Self.bracketedPasteTimeout
+      let isComplete = decoder.consume(byte)
+      if decoder.isOverflowed {
+        resetBracketedPaste()
+        throw TerminalPickerError.terminalPasteTooLarge
+      }
+      if isComplete {
+        let text = decoder.text
+        resetBracketedPaste()
+        return .paste(text)
+      }
+    }
+  }
+
+  private func resetBracketedPaste() {
+    bracketedPasteDecoder = nil
+    bracketedPasteDeadline = nil
   }
 
   private func event(

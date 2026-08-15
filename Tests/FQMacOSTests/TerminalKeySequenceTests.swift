@@ -3,6 +3,20 @@ import XCTest
 @testable import FQMacOS
 
 final class TerminalKeySequenceTests: XCTestCase {
+  func testRecognizesOnlyTheExactBracketedPasteStartSequence() {
+    XCTAssertTrue(TerminalKeySequence.isBracketedPasteStart(parameters: "200", final: 126))
+    XCTAssertFalse(TerminalKeySequence.isBracketedPasteStart(parameters: "201", final: 126))
+    XCTAssertFalse(TerminalKeySequence.isBracketedPasteStart(parameters: "200;1", final: 126))
+    XCTAssertFalse(
+      TerminalKeySequence.isBracketedPasteStart(
+        parameters: "200",
+        intermediates: "$",
+        final: 126
+      )
+    )
+    XCTAssertFalse(TerminalKeySequence.isBracketedPasteStart(parameters: "200", final: 65))
+  }
+
   func testParsesSS3NavigationAndF1() {
     XCTAssertEqual(TerminalKeySequence.ss3(final: 65), .up)
     XCTAssertEqual(TerminalKeySequence.ss3(final: 66), .down)
