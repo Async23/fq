@@ -194,8 +194,10 @@ public final class FQCommand {
       f 或 /                   进入筛选
       筛选中 ←/→，Home/End     移动光标；Backspace/Delete 删除
       Space                   标记 / 取消标记当前应用
-      Enter                   打开默认动作面板
-      t / K                   打开正常退出 / 强制退出动作
+      v                       范围选择；j/k 扩展，v 或 Space 完成，Esc 撤销
+      a / i / x               全选可见 / 反选可见 / 清空全部标记
+      Enter                   打开默认动作确认
+      t / K                   打开正常退出 / 强制退出确认
       Ctrl-U；浏览中 Delete    清空筛选
       鼠标                     滚轮浏览；滚动条可点击或拖动；可见控件可点
       ? / H                   查看选择器内帮助
@@ -203,7 +205,7 @@ public final class FQCommand {
       q / Esc / Ctrl-C        取消
 
     有标记时，Enter、t 或 K 会对整组应用执行同一个动作；没有标记时只操作当前行。
-    动作面板默认选中取消；用 ← / → 或 Tab 切换，再按 Enter 执行所选项。
+    确认时保留应用列表；按 y 执行，按 n、Esc、Enter 或 Space 返回。
     应用列表会自动刷新，并按进程身份保留当前选择与确认目标。
     fq 只显示 macOS 认定为普通 GUI 应用的进程，不显示守护进程和大多数菜单栏工具。
     """ + "\n"

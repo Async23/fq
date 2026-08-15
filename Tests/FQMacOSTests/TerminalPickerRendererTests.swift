@@ -21,7 +21,7 @@ final class TerminalPickerRendererTests: XCTestCase {
   ]
 
   func testWidePickerUsesBtopStyleFrameColumnsActionsAndLocation() {
-    let output = render(makeSession(), rows: 24, columns: 100)
+    let output = render(makeSession(), rows: 24, columns: 160)
 
     XCTAssertTrue(output.contains("┌─ fq"))
     XCTAssertFalse(output.contains("┌─ 1 fq"))
@@ -40,7 +40,7 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     let lines = renderedLines(output)
     XCTAssertEqual(lines.count, 24)
-    XCTAssertTrue(lines.allSatisfy { TerminalText.displayWidth($0) == 99 })
+    XCTAssertTrue(lines.allSatisfy { TerminalText.displayWidth($0) == 159 })
   }
 
   func testNarrowPickerDropsBundleColumnWithoutBreakingFrameWidth() {
@@ -106,13 +106,13 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     let output = render(session, rows: 18, columns: 90)
 
-    XCTAssertTrue(output.contains("操作确认"))
+    XCTAssertTrue(output.contains("确认强制退出"))
     XCTAssertTrue(output.contains("强制退出"))
     XCTAssertTrue(output.contains("Finder"))
     XCTAssertTrue(output.contains("由 macOS 自动重新打开"))
-    XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
-    XCTAssertTrue(output.contains("←→/Tab 选择 │ Enter/Space 执行所选"))
-    XCTAssertTrue(output.contains("Y 执行 │ N/Esc 返回"))
+    XCTAssertTrue(output.contains("y 执行"))
+    XCTAssertTrue(output.contains("n/Esc 返回"))
+    XCTAssertFalse(output.contains("[ 执行 ]"))
   }
 
   func testHelpViewDocumentsBtopStyleCommands() {
@@ -122,7 +122,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     let output = render(session, rows: 20, columns: 100)
 
     XCTAssertTrue(output.contains("导航"))
-    XCTAssertTrue(output.contains("鼠标滚轮浏览 · 单击选择 · 再点打开动作"))
+    XCTAssertTrue(output.contains("鼠标滚轮浏览 · 单击定位 · 再点标记/取消"))
     XCTAssertTrue(output.contains("标题/底栏控件可点"))
     XCTAssertTrue(output.contains("点击轨迹跳转 · 拖动滑块滚动"))
     XCTAssertTrue(output.contains("切换智能/应用/PID/状态 · r  反向"))
@@ -130,9 +130,10 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertTrue(output.contains("f 或 /"))
     XCTAssertTrue(output.contains("Backspace/Delete  删除"))
     XCTAssertTrue(output.contains("Space  标记/取消"))
+    XCTAssertTrue(output.contains("v  范围"))
+    XCTAssertTrue(output.contains("a  全选可见 · i  反选可见 · x  清空全部标记"))
     XCTAssertTrue(output.contains("t  正常退出 · K  强制退出"))
-    XCTAssertTrue(output.contains("默认选择取消"))
-    XCTAssertTrue(output.contains("Enter/Space 执行所选；Y 直接执行，N 返回"))
+    XCTAssertTrue(output.contains("确认时保留列表上下文；y 执行"))
     XCTAssertTrue(output.contains("F1、? 或 H  帮助"))
     XCTAssertTrue(output.contains("Ctrl-Z  挂起，fg 返回"))
   }
@@ -142,20 +143,19 @@ final class TerminalPickerRendererTests: XCTestCase {
     _ = session.handle(.text("?"))
 
     let common = render(session, rows: 16, columns: 90)
-    XCTAssertTrue(common.contains("默认取消 · ←→/Tab 切换"))
+    XCTAssertTrue(common.contains("确认  y 执行 · n/Esc/Enter/Space 返回"))
     XCTAssertTrue(common.contains("q/Esc/Ctrl-C 取消"))
     XCTAssertTrue(common.contains("Ctrl-Z 挂起，fg 返回"))
     XCTAssertEqual(renderedLines(common).count, 16)
 
     let condensed = render(session, rows: 10, columns: 60)
-    XCTAssertTrue(condensed.contains("默认取消 · ←→/Tab 切换"))
-    XCTAssertTrue(condensed.contains("↵/Space 确认 · Y 执行 · N 返回"))
+    XCTAssertTrue(condensed.contains("确认  y 执行 · n/Esc/Enter/Space 返回"))
     XCTAssertTrue(condensed.contains("q/Esc/Ctrl-C 取消"))
     XCTAssertTrue(condensed.contains("Ctrl-Z 挂起，fg 返回"))
     XCTAssertEqual(renderedLines(condensed).count, 10)
 
     let terse = render(session, rows: 6, columns: 40)
-    XCTAssertTrue(terse.contains("默认取消 · Y 执行 · N/Esc 返回"))
+    XCTAssertTrue(terse.contains("确认 y 执行 · n/Esc 返回"))
     XCTAssertEqual(renderedLines(terse).count, 6)
 
     let singleLineDimensions = TerminalDimensions(rows: 1, columns: 10)
@@ -380,7 +380,7 @@ final class TerminalPickerRendererTests: XCTestCase {
 
   func testMouseHitTestingMapsVisibleBtopStyleControlsToKeyboardCommands() {
     let session = makeSession()
-    let dimensions = TerminalDimensions(rows: 24, columns: 100)
+    let dimensions = TerminalDimensions(rows: 24, columns: 160)
 
     XCTAssertEqual(
       mouseTarget(at: "f 筛选", row: 1, session: session, dimensions: dimensions),
@@ -409,6 +409,22 @@ final class TerminalPickerRendererTests: XCTestCase {
     XCTAssertEqual(
       mouseTarget(at: "Space 标记", row: 24, session: session, dimensions: dimensions),
       .command(.text(" "))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "v 范围", row: 24, session: session, dimensions: dimensions),
+      .command(.text("v"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "a 全选", row: 24, session: session, dimensions: dimensions),
+      .command(.text("a"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "i 反选", row: 24, session: session, dimensions: dimensions),
+      .command(.text("i"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "x 清空", row: 24, session: session, dimensions: dimensions),
+      .command(.text("x"))
     )
     XCTAssertEqual(
       mouseTarget(at: "↵ 操作", row: 24, session: session, dimensions: dimensions),
@@ -515,7 +531,7 @@ final class TerminalPickerRendererTests: XCTestCase {
     )
   }
 
-  func testMouseHitTestingFindsBothConfirmationButtons() {
+  func testMouseHitTestingFindsBothConfirmationCommands() {
     var session = makeSession()
     _ = session.handle(.enter)
     let dimensions = TerminalDimensions(rows: 18, columns: 90)
@@ -534,8 +550,8 @@ final class TerminalPickerRendererTests: XCTestCase {
       }
     }
 
-    XCTAssertTrue(targets.contains(.confirmationExecute))
-    XCTAssertTrue(targets.contains(.confirmationCancel))
+    XCTAssertTrue(targets.contains(.command(.confirmExit)))
+    XCTAssertTrue(targets.contains(.command(.cancelExit)))
   }
 
   func testMouseHitTestingExposesOnlyReturnWhenConfirmationTargetDisappears() {
@@ -558,11 +574,11 @@ final class TerminalPickerRendererTests: XCTestCase {
       }
     }
 
-    XCTAssertFalse(targets.contains(.confirmationExecute))
-    XCTAssertTrue(targets.contains(.confirmationCancel))
+    XCTAssertFalse(targets.contains(.command(.confirmExit)))
+    XCTAssertTrue(targets.contains(.command(.cancelExit)))
   }
 
-  func testCompactConfirmationAlwaysShowsAndMapsItsCurrentFocus() {
+  func testCompactConfirmationKeepsYesAndNoCommandsVisibleAndClickable() {
     var session = makeSession()
     _ = session.handle(.enter)
     let shortDimensions = TerminalDimensions(rows: 7, columns: 40)
@@ -572,12 +588,15 @@ final class TerminalPickerRendererTests: XCTestCase {
       columns: shortDimensions.columns
     )
 
-    XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
+    XCTAssertTrue(output.contains("y 执行"))
+    XCTAssertTrue(output.contains("n/Esc 返回"))
     XCTAssertTrue(output.contains("未保存的内容可能会丢失"))
     XCTAssertTrue(
-      mouseTargets(session: session, dimensions: shortDimensions).contains(.confirmationExecute))
+      mouseTargets(session: session, dimensions: shortDimensions).contains(
+        .command(.confirmExit)))
     XCTAssertTrue(
-      mouseTargets(session: session, dimensions: shortDimensions).contains(.confirmationCancel))
+      mouseTargets(session: session, dimensions: shortDimensions).contains(
+        .command(.cancelExit)))
 
     var narrowSession = makeSession()
     _ = narrowSession.handle(.enter)
@@ -587,30 +606,14 @@ final class TerminalPickerRendererTests: XCTestCase {
       rows: oneLineDimensions.rows,
       columns: oneLineDimensions.columns
     )
-    XCTAssertTrue(output.contains("▸取消◂"))
-    XCTAssertFalse(
+    XCTAssertTrue(output.contains("y/n"))
+    XCTAssertTrue(
       mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
-        .contains(.confirmationExecute)
+        .contains(.command(.confirmExit))
     )
     XCTAssertTrue(
       mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
-        .contains(.confirmationCancel)
-    )
-
-    _ = narrowSession.handle(.moveHorizontal(1))
-    output = render(
-      narrowSession,
-      rows: oneLineDimensions.rows,
-      columns: oneLineDimensions.columns
-    )
-    XCTAssertTrue(output.contains("▸执行◂"))
-    XCTAssertTrue(
-      mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
-        .contains(.confirmationExecute)
-    )
-    XCTAssertFalse(
-      mouseTargets(session: narrowSession, dimensions: oneLineDimensions)
-        .contains(.confirmationCancel)
+        .contains(.command(.cancelExit))
     )
   }
 
@@ -622,12 +625,12 @@ final class TerminalPickerRendererTests: XCTestCase {
     let output = render(session, rows: dimensions.rows, columns: dimensions.columns)
     let targets = mouseTargets(session: session, dimensions: dimensions)
 
-    XCTAssertTrue(output.contains("[ 返回 ]"))
-    XCTAssertFalse(targets.contains(.confirmationExecute))
-    XCTAssertTrue(targets.contains(.confirmationCancel))
+    XCTAssertTrue(output.contains("n/Esc 返回"))
+    XCTAssertFalse(targets.contains(.command(.confirmExit)))
+    XCTAssertTrue(targets.contains(.command(.cancelExit)))
   }
 
-  func testNormalQuitShortcutOpensNonDestructiveActionPanel() {
+  func testNormalQuitShortcutOpensNonDestructiveConfirmation() {
     var session = makeSession()
     _ = session.handle(.text("t"))
 
@@ -635,7 +638,8 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("正常退出"))
     XCTAssertTrue(output.contains("应用可以拒绝或显示保存提示"))
-    XCTAssertTrue(output.contains("[ 执行 ]    ▸ [ 取消 ] ◂"))
+    XCTAssertTrue(output.contains("y 执行"))
+    XCTAssertFalse(output.contains("[ 执行 ]"))
     XCTAssertFalse(output.contains("未保存的内容可能会丢失"))
   }
 
@@ -661,11 +665,15 @@ final class TerminalPickerRendererTests: XCTestCase {
   }
 
   func testBrowseFooterExplainsVimMarkingAndActionsWithoutEllipses() {
-    let output = render(makeSession(), rows: 16, columns: 100)
+    let output = render(makeSession(), rows: 16, columns: 160)
     let footer = try! XCTUnwrap(renderedLines(output).last)
 
-    XCTAssertTrue(footer.contains("jk 选择"))
+    XCTAssertTrue(footer.contains("jk 移动"))
     XCTAssertTrue(footer.contains("Space 标记"))
+    XCTAssertTrue(footer.contains("v 范围"))
+    XCTAssertTrue(footer.contains("a 全选"))
+    XCTAssertTrue(footer.contains("i 反选"))
+    XCTAssertTrue(footer.contains("x 清空"))
     XCTAssertTrue(footer.contains("↵ 操作"))
     XCTAssertTrue(footer.contains("t 退出"))
     XCTAssertTrue(footer.contains("K 强退"))
@@ -696,9 +704,70 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     let output = render(session, rows: 16, columns: 90)
 
-    XCTAssertTrue(output.contains("批量强制退出"))
-    XCTAssertTrue(output.contains("2 个应用"))
+    XCTAssertTrue(output.contains("确认强制退出 ×2"))
+    XCTAssertTrue(output.contains("1/2 可用"))
     XCTAssertTrue(output.contains("只会处理剩余 1 个"))
+  }
+
+  func testConfirmationKeepsListContextAndUsesTerminalCommandsInsteadOfButtons() {
+    var session = makeSession()
+    _ = session.handle(.text(" "))
+    _ = session.handle(.text("j"))
+    _ = session.handle(.text(" "))
+    _ = session.handle(.text("t"))
+
+    let output = render(session, rows: 16, columns: 100)
+
+    XCTAssertTrue(output.contains("PID"))
+    XCTAssertTrue(output.contains("Ghostty"))
+    XCTAssertTrue(output.contains("微信"))
+    XCTAssertTrue(output.contains("确认正常退出"))
+    XCTAssertTrue(output.contains("y 执行"))
+    XCTAssertTrue(output.contains("n/Esc 返回"))
+    XCTAssertFalse(output.contains("[ 执行 ]"))
+    XCTAssertFalse(output.contains("[ 取消 ]"))
+    XCTAssertFalse(output.contains("←→/Tab"))
+  }
+
+  func testRangeSelectionModeAndBulkCommandsAreDiscoverable() {
+    var session = makeSession()
+    _ = session.handle(.text("v"))
+
+    let browse = render(session, rows: 16, columns: 100)
+    XCTAssertTrue(browse.contains("范围选择"))
+    XCTAssertTrue(browse.contains("v 完成"))
+    XCTAssertTrue(browse.contains("esc 撤销"))
+
+    _ = session.handle(.text("v"))
+    _ = session.handle(.text("H"))
+    let help = render(session, rows: 20, columns: 100)
+    XCTAssertTrue(help.contains("v  范围"))
+    XCTAssertTrue(help.contains("a  全选"))
+    XCTAssertTrue(help.contains("i  反选"))
+    XCTAssertTrue(help.contains("x  清空"))
+  }
+
+  func testRangeFooterCommandsRemainClickable() {
+    var session = makeSession()
+    _ = session.handle(.text("v"))
+    let dimensions = TerminalDimensions(rows: 24, columns: 160)
+
+    XCTAssertEqual(
+      mouseTarget(at: "v/Space 完成", row: 24, session: session, dimensions: dimensions),
+      .command(.text("v"))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "Space", row: 24, session: session, dimensions: dimensions),
+      .command(.text(" "))
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "esc 撤销", row: 24, session: session, dimensions: dimensions),
+      .command(.escape)
+    )
+    XCTAssertEqual(
+      mouseTarget(at: "↵", row: 24, session: session, dimensions: dimensions),
+      .command(.enter)
+    )
   }
 
   func testBrowseHeaderReflectsSortFieldAndReverseState() {
@@ -754,9 +823,8 @@ final class TerminalPickerRendererTests: XCTestCase {
 
     XCTAssertTrue(output.contains("目标应用已经退出或不再可用"))
     XCTAssertTrue(output.contains("fq 不会发送退出请求"))
-    XCTAssertTrue(output.contains("▸ [ 返回 ] ◂"))
-    XCTAssertTrue(output.contains("Enter/Space/N/Esc 返回"))
-    XCTAssertFalse(output.contains("[ 执行 ]"))
+    XCTAssertTrue(output.contains("n/Esc 返回"))
+    XCTAssertFalse(output.contains("y 执行"))
   }
 
   private func makeSession() -> PickerSession {

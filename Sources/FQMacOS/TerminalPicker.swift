@@ -153,17 +153,13 @@ struct TerminalMouseInteraction {
       switch target {
       case .application(let index):
         return index == session.state.selectedIndex
-          ? .enter
+          ? .text(" ")
           : .move(index - session.state.selectedIndex)
       case .command(let event):
         return event
       case .scrollbarThumb:
         isDraggingScrollbar = true
         return nil
-      case .confirmationExecute:
-        return .chooseConfirmation(.execute)
-      case .confirmationCancel:
-        return .chooseConfirmation(.cancel)
       }
     }
   }

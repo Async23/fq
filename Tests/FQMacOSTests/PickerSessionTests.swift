@@ -10,7 +10,7 @@ final class PickerSessionTests: XCTestCase {
     pickerCandidate(pid: 33, name: "Charlie"),
   ]
 
-  func testDefaultActionOpensCancelFocusedConfirmation() {
+  func testDefaultActionOpensCommandConfirmationAndEnterReturnsSafely() {
     var session = makeSession(defaultAction: .forceQuit)
     let plan = ApplicationExitPlan(
       applications: [applications[0]],
@@ -20,15 +20,14 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(
       session.phase,
-      .confirming(PickerConfirmation(plan: plan, choice: .cancel))
+      .confirming(PickerConfirmation(plan: plan))
     )
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
 
     _ = session.handle(.enter)
-    XCTAssertEqual(session.handle(.cycleFocus), .stay(redraw: true))
     XCTAssertEqual(
-      session.handle(.enter),
+      session.handle(.confirmExit),
       .select(plan)
     )
   }
@@ -42,11 +41,11 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.state.selectedApplication, applications[0])
   }
 
-  func testConfirmationButtonsCanBeActivatedDirectlyByMouseChoice() {
+  func testConfirmationCommandsCanBeActivatedDirectlyByMouse() {
     var cancelSession = makeSession(defaultAction: .forceQuit)
     _ = cancelSession.handle(.enter)
     XCTAssertEqual(
-      cancelSession.handle(.chooseConfirmation(.cancel)),
+      cancelSession.handle(.cancelExit),
       .stay(redraw: true)
     )
     XCTAssertEqual(cancelSession.phase, .browse)
@@ -54,7 +53,7 @@ final class PickerSessionTests: XCTestCase {
     var executeSession = makeSession(defaultAction: .forceQuit)
     _ = executeSession.handle(.enter)
     XCTAssertEqual(
-      executeSession.handle(.chooseConfirmation(.execute)),
+      executeSession.handle(.confirmExit),
       .select(
         ApplicationExitPlan(applications: [applications[0]], action: .forceQuit)
       )
@@ -64,27 +63,24 @@ final class PickerSessionTests: XCTestCase {
     _ = unavailableSession.handle(.enter)
     _ = unavailableSession.replaceApplications(Array(applications.dropFirst()))
     XCTAssertEqual(
-      unavailableSession.handle(.chooseConfirmation(.execute)),
+      unavailableSession.handle(.confirmExit),
       .stay(redraw: false)
     )
     XCTAssertFalse(unavailableSession.isConfirmationTargetAvailable)
   }
 
-  func testConfirmationUsesHorizontalOrTabInputButNotVerticalMovement() {
+  func testConfirmationIgnoresNavigationAndTabInput() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.enter)
+    let confirmation = session.phase
 
-    XCTAssertEqual(session.handle(.move(-1)), .stay(redraw: false))
-    XCTAssertEqual(session.confirmationChoice, .cancel)
-
-    _ = session.handle(.moveHorizontal(-1))
-    XCTAssertEqual(session.confirmationChoice, .execute)
-
-    _ = session.handle(.cycleFocus)
-    XCTAssertEqual(session.confirmationChoice, .cancel)
+    for event in [PickerEvent.move(-1), .moveHorizontal(-1), .cycleFocus] {
+      XCTAssertEqual(session.handle(event), .stay(redraw: false))
+      XCTAssertEqual(session.phase, confirmation)
+    }
   }
 
-  func testConfirmationSupportsBtopYesNoSpaceAndBackspaceKeys() {
+  func testConfirmationUsesYesToExecuteAndCommonReturnKeysToCancel() {
     let expectedPlan = ApplicationExitPlan(
       applications: [applications[0]],
       action: .forceQuit
@@ -100,9 +96,10 @@ final class PickerSessionTests: XCTestCase {
     _ = spaceSession.handle(.enter)
     XCTAssertEqual(spaceSession.handle(.text(" ")), .stay(redraw: true))
     XCTAssertEqual(spaceSession.phase, .browse)
-    _ = spaceSession.handle(.enter)
-    _ = spaceSession.handle(.moveHorizontal(1))
-    XCTAssertEqual(spaceSession.handle(.text(" ")), .select(expectedPlan))
+
+    var directSession = makeSession(defaultAction: .forceQuit)
+    _ = directSession.handle(.enter)
+    XCTAssertEqual(directSession.handle(.confirmExit), .select(expectedPlan))
 
     for cancelEvent in [PickerEvent.text("n"), .text("N"), .backspace] {
       var cancelSession = makeSession(defaultAction: .forceQuit)
@@ -132,9 +129,8 @@ final class PickerSessionTests: XCTestCase {
         )
       )
     )
-    _ = terminateSession.handle(.cycleFocus)
     XCTAssertEqual(
-      terminateSession.handle(.enter),
+      terminateSession.handle(.confirmExit),
       .select(ApplicationExitPlan(applications: [applications[0]], action: .quit))
     )
 
@@ -168,7 +164,6 @@ final class PickerSessionTests: XCTestCase {
           return false
         })
       )
-      XCTAssertEqual(session.confirmationChoice, .cancel)
       XCTAssertEqual(session.state.query, "")
     }
   }
@@ -244,8 +239,119 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.confirmationPlan, expectedPlan)
     XCTAssertEqual(session.confirmationAvailableApplications, expectedPlan.applications)
 
-    _ = session.handle(.cycleFocus)
-    XCTAssertEqual(session.handle(.enter), .select(expectedPlan))
+    XCTAssertEqual(session.handle(.confirmExit), .select(expectedPlan))
+  }
+
+  func testVisualRangeSelectionExtendsShrinksCommitsAndCanBeCancelled() {
+    var session = makeSession(defaultAction: .forceQuit)
+
+    _ = session.handle(.text("v"))
+    XCTAssertEqual(session.markedApplicationIdentities, [applications[0].id])
+    _ = session.handle(.text("j"))
+    _ = session.handle(.text("j"))
+    XCTAssertEqual(session.markedApplicationIdentities, applications.map(\.id))
+
+    _ = session.handle(.text("k"))
+    XCTAssertEqual(
+      session.markedApplicationIdentities,
+      Array(applications.prefix(2)).map(\.id)
+    )
+    _ = session.handle(.text("v"))
+    XCTAssertEqual(session.statusMessage, "范围标记已保留")
+
+    _ = session.handle(.text("v"))
+    _ = session.handle(.text("j"))
+    _ = session.handle(.escape)
+    XCTAssertEqual(
+      session.markedApplicationIdentities,
+      Array(applications.prefix(2)).map(\.id)
+    )
+    XCTAssertEqual(session.phase, .browse)
+  }
+
+  func testBulkSelectionCommandsOperateOnVisibleApplications() {
+    var session = makeSession(defaultAction: .forceQuit)
+
+    _ = session.handle(.text("a"))
+    XCTAssertEqual(session.markedApplicationIdentities, applications.map(\.id))
+
+    _ = session.handle(.text("i"))
+    XCTAssertTrue(session.markedApplicationIdentities.isEmpty)
+
+    _ = session.handle(.text(" "))
+    _ = session.handle(.text("i"))
+    XCTAssertEqual(
+      session.markedApplicationIdentities,
+      Array(applications.dropFirst()).map(\.id)
+    )
+
+    _ = session.handle(.text("x"))
+    XCTAssertTrue(session.markedApplicationIdentities.isEmpty)
+  }
+
+  func testBulkSelectionCommandsRespectFilterAndPreserveHiddenMarks() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.text(" "))
+    _ = session.handle(.text("f"))
+    _ = session.handle(.text("b"))
+    _ = session.handle(.text("r"))
+    _ = session.handle(.enter)
+
+    XCTAssertEqual(session.state.visibleApplications, [applications[1]])
+
+    _ = session.handle(.text("a"))
+    XCTAssertEqual(
+      session.markedApplicationIdentities,
+      [applications[0].id, applications[1].id]
+    )
+
+    _ = session.handle(.text("i"))
+    XCTAssertEqual(session.markedApplicationIdentities, [applications[0].id])
+
+    _ = session.handle(.text("x"))
+    XCTAssertTrue(session.markedApplicationIdentities.isEmpty)
+  }
+
+  func testRangeSelectionFreezesDisplayAndAppliesLatestSnapshotWhenFinished() {
+    let refreshedBravo = pickerCandidate(pid: 22, name: "Bravo", isActive: true)
+    let delta = pickerCandidate(pid: 44, name: "Delta")
+    let latestApplications = [applications[2], refreshedBravo, delta]
+
+    var commitSession = makeSession(defaultAction: .forceQuit)
+    _ = commitSession.handle(.text("v"))
+    _ = commitSession.handle(.text("j"))
+
+    XCTAssertFalse(commitSession.replaceApplications(latestApplications))
+    XCTAssertEqual(commitSession.state.applications, applications)
+    XCTAssertEqual(
+      commitSession.markedApplicationIdentities,
+      Array(applications.prefix(2)).map(\.id)
+    )
+
+    _ = commitSession.handle(.text("v"))
+    XCTAssertEqual(commitSession.state.applications, latestApplications)
+    XCTAssertEqual(commitSession.state.selectedApplication, refreshedBravo)
+    XCTAssertEqual(commitSession.markedApplicationIdentities, [refreshedBravo.id])
+
+    var cancelSession = makeSession(defaultAction: .forceQuit)
+    _ = cancelSession.handle(.text("v"))
+    _ = cancelSession.handle(.text("j"))
+    XCTAssertFalse(cancelSession.replaceApplications(latestApplications))
+
+    _ = cancelSession.handle(.escape)
+    XCTAssertEqual(cancelSession.state.applications, latestApplications)
+    XCTAssertTrue(cancelSession.markedApplicationIdentities.isEmpty)
+  }
+
+  func testActionDoesNotFallThroughToANeighbourWhenASelectedRangeExits() {
+    var session = makeSession(defaultAction: .forceQuit)
+    _ = session.handle(.text("v"))
+
+    XCTAssertFalse(session.replaceApplications(Array(applications.dropFirst())))
+    XCTAssertEqual(session.handle(.text("K")), .stay(redraw: true))
+    XCTAssertEqual(session.phase, .browse)
+    XCTAssertNil(session.confirmationPlan)
+    XCTAssertEqual(session.statusMessage, "已标记的应用均已退出")
   }
 
   func testDefaultAndQuitActionsAlsoUseTheMarkedBatch() {
@@ -271,11 +377,11 @@ final class PickerSessionTests: XCTestCase {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.text("f"))
 
-    for key in ["h", "j", "k", "l", " "] {
+    for key in ["h", "j", "k", "l", " ", "v", "a", "i", "x"] {
       _ = session.handle(.text(key))
     }
 
-    XCTAssertEqual(session.state.query, "hjkl ")
+    XCTAssertEqual(session.state.query, "hjkl vaix")
     XCTAssertTrue(session.markedApplicationIdentities.isEmpty)
     guard case .filtering = session.phase else {
       return XCTFail("Expected filtering phase")
@@ -313,25 +419,28 @@ final class PickerSessionTests: XCTestCase {
     XCTAssertEqual(session.confirmationAvailableApplications, [applications[1]])
     XCTAssertEqual(session.unavailableConfirmationTargetCount, 1)
 
-    _ = session.handle(.cycleFocus)
     XCTAssertEqual(
-      session.handle(.enter),
+      session.handle(.confirmExit),
       .select(ApplicationExitPlan(applications: [applications[1]], action: .forceQuit))
     )
   }
 
-  func testBatchConfirmationReturnsFocusToCancelWhenATargetExits() {
+  func testBatchConfirmationRequiresFreshYesAfterATargetExits() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.text(" "))
     _ = session.handle(.text("j"))
     _ = session.handle(.text(" "))
     _ = session.handle(.text("K"))
-    _ = session.handle(.cycleFocus)
+    _ = session.handle(.inputIdle)
 
-    XCTAssertEqual(session.confirmationChoice, .execute)
     XCTAssertTrue(session.replaceApplications(Array(applications.dropFirst())))
-    XCTAssertEqual(session.confirmationChoice, .cancel)
     XCTAssertEqual(session.confirmationAvailableApplications, [applications[1]])
+    XCTAssertEqual(session.handle(.text("y")), .stay(redraw: false))
+    _ = session.handle(.inputIdle)
+    XCTAssertEqual(
+      session.handle(.text("y")),
+      .select(ApplicationExitPlan(applications: [applications[1]], action: .forceQuit))
+    )
   }
 
   func testFilterEditingAppliesLiveAndEscapeRestoresPreviousQuery() {
@@ -557,7 +666,6 @@ final class PickerSessionTests: XCTestCase {
 
     var confirmingSession = makeSession(defaultAction: .forceQuit)
     _ = confirmingSession.handle(.enter)
-    _ = confirmingSession.handle(.cycleFocus)
     let confirmingPhase = confirmingSession.phase
 
     XCTAssertEqual(confirmingSession.handle(.suspend), .suspend)
@@ -675,14 +783,14 @@ final class PickerSessionTests: XCTestCase {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.text("u"))
     _ = session.handle(.enter)
-    _ = session.handle(.cycleFocus)
+    _ = session.handle(.inputIdle)
 
     XCTAssertTrue(session.replaceApplications(Array(applications.dropFirst())))
     XCTAssertTrue(session.isPaused)
     XCTAssertEqual(session.state.applications, applications)
     XCTAssertEqual(session.confirmationPlan?.applications, [applications[0]])
     XCTAssertFalse(session.isConfirmationTargetAvailable)
-    XCTAssertEqual(session.confirmationChoice, .cancel)
+    XCTAssertEqual(session.handle(.text("y")), .stay(redraw: false))
 
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)
@@ -703,13 +811,12 @@ final class PickerSessionTests: XCTestCase {
   func testConfirmationRemainsPinnedWhenTargetDisappearsDuringRefresh() {
     var session = makeSession(defaultAction: .forceQuit)
     _ = session.handle(.enter)
-    _ = session.handle(.cycleFocus)
-    XCTAssertEqual(session.confirmationChoice, .execute)
+    _ = session.handle(.inputIdle)
 
     XCTAssertTrue(session.replaceApplications(Array(applications.dropFirst())))
     XCTAssertEqual(session.confirmationPlan?.applications, [applications[0]])
     XCTAssertFalse(session.isConfirmationTargetAvailable)
-    XCTAssertEqual(session.confirmationChoice, .cancel)
+    XCTAssertEqual(session.handle(.text("y")), .stay(redraw: false))
 
     XCTAssertEqual(session.handle(.enter), .stay(redraw: true))
     XCTAssertEqual(session.phase, .browse)

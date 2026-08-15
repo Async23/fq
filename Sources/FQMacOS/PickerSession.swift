@@ -11,15 +11,14 @@ struct ApplicationExitPlan: Equatable {
   }
 }
 
-enum PickerConfirmationChoice: Equatable {
-  case execute
-  case cancel
-}
-
 struct PickerConfirmation: Equatable {
   let plan: ApplicationExitPlan
-  var choice: PickerConfirmationChoice = .cancel
   var isDirectExecutionArmed = false
+}
+
+private struct PickerRangeSelection: Equatable {
+  let anchorIdentity: ApplicationIdentity
+  let baselineMarkedIdentities: [ApplicationIdentity]
 }
 
 struct PickerFilterEdit: Equatable {
@@ -127,7 +126,8 @@ enum PickerEvent: Equatable {
   case positionViewport(startIndex: Int, listRows: Int)
   case moveHorizontal(Int)
   case cycleFocus
-  case chooseConfirmation(PickerConfirmationChoice)
+  case confirmExit
+  case cancelExit
   case first
   case last
   case backspace
@@ -157,6 +157,7 @@ struct PickerSession {
   private(set) var markedApplicationIdentities: [ApplicationIdentity] = []
   private var viewportListRows: Int?
   private var latestApplications: [ApplicationCandidate]
+  private var rangeSelection: PickerRangeSelection?
 
   init(
     applications: [ApplicationCandidate],
@@ -188,11 +189,8 @@ struct PickerSession {
     max(0, (confirmationPlan?.applications.count ?? 0) - confirmationAvailableApplications.count)
   }
 
-  var confirmationChoice: PickerConfirmationChoice? {
-    guard case .confirming(let confirmation) = phase else {
-      return nil
-    }
-    return confirmation.choice
+  var isRangeSelecting: Bool {
+    rangeSelection != nil
   }
 
   var filterCursorOffset: Int? {
@@ -208,6 +206,10 @@ struct PickerSession {
 
   func isMarked(_ application: ApplicationCandidate) -> Bool {
     markedApplicationIdentities.contains(application.id)
+  }
+
+  func isConfirmationTarget(_ application: ApplicationCandidate) -> Bool {
+    confirmationPlan?.applications.contains(where: { $0.id == application.id }) == true
   }
 
   func visibleApplicationRange(listRows: Int) -> Range<Int> {
@@ -240,12 +242,12 @@ struct PickerSession {
     latestApplications = applications
 
     var shouldRedraw = false
-    if !isPaused, applications != state.applications {
+    if !isPaused, !isRangeSelecting, applications != state.applications {
       state.replaceApplications(applications)
       shouldRedraw = true
     }
 
-    if !isPaused {
+    if !isPaused, !isRangeSelecting {
       if discardUnavailableMarks(in: applications) {
         shouldRedraw = true
       }
@@ -260,7 +262,6 @@ struct PickerSession {
           applications: refreshedApplications,
           action: confirmation.plan.action
         ),
-        choice: confirmation.choice,
         isDirectExecutionArmed: confirmation.isDirectExecutionArmed
       )
       if refreshedConfirmation != confirmation {
@@ -273,9 +274,9 @@ struct PickerSession {
       previousAvailableTargetCount != confirmationAvailableApplications.count
     if case .confirming(var confirmation) = phase,
       availableTargetCountChanged,
-      confirmation.choice != .cancel
+      confirmation.isDirectExecutionArmed
     {
-      confirmation.choice = .cancel
+      confirmation.isDirectExecutionArmed = false
       phase = .confirming(confirmation)
       shouldRedraw = true
     }
@@ -329,21 +330,28 @@ struct PickerSession {
     case .enter:
       return requestExit(defaultAction)
     case .escape:
+      if cancelRangeSelection() {
+        return .stay(redraw: true)
+      }
       return .cancel
     case .move(let offset):
-      state.moveSelection(by: offset)
+      moveSelection(by: offset)
     case .positionViewport(let startIndex, let listRows):
       positionViewport(at: startIndex, listRows: listRows)
+      updateRangeSelection()
     case .moveHorizontal(let offset):
+      finishRangeSelection(commit: true, announce: false)
       state.cycleSort(by: offset)
     case .cycleFocus:
       return .stay(redraw: false)
-    case .chooseConfirmation:
+    case .confirmExit, .cancelExit:
       return .stay(redraw: false)
     case .first:
       state.moveToFirst()
+      updateRangeSelection()
     case .last:
       state.moveToLast()
+      updateRangeSelection()
     case .backspace:
       guard !state.query.isEmpty else {
         return .stay(redraw: false)
@@ -360,26 +368,44 @@ struct PickerSession {
       case "q":
         return .cancel
       case "f", "/":
+        finishRangeSelection(commit: true, announce: false)
         beginFiltering()
       case "?", "H":
+        finishRangeSelection(commit: true, announce: false)
         phase = .help
       case "h":
+        finishRangeSelection(commit: true, announce: false)
         state.cycleSort(by: -1)
       case "j":
-        state.moveSelection(by: 1)
+        moveSelection(by: 1)
       case "k":
-        state.moveSelection(by: -1)
+        moveSelection(by: -1)
       case "l":
+        finishRangeSelection(commit: true, announce: false)
         state.cycleSort(by: 1)
       case " ":
-        toggleMark()
+        if isRangeSelecting {
+          finishRangeSelection(commit: true)
+        } else {
+          toggleMark()
+        }
+      case "v":
+        toggleRangeSelection()
+      case "a":
+        markAllVisibleApplications()
+      case "i":
+        invertVisibleApplicationMarks()
+      case "x":
+        clearApplicationMarks()
       case "t":
         return requestExit(.quit)
       case "K":
         return requestExit(.forceQuit)
       case "r":
+        finishRangeSelection(commit: true, announce: false)
         state.toggleSortDirection()
       case "u":
+        finishRangeSelection(commit: true, announce: false)
         togglePause()
       default:
         statusMessage = "筛选请先按 f 或 /"
@@ -387,6 +413,7 @@ struct PickerSession {
     case .paste:
       statusMessage = "粘贴筛选请先按 f 或 /"
     case .help:
+      finishRangeSelection(commit: true, announce: false)
       phase = .help
     case .interrupt, .suspend, .redraw, .inputIdle:
       return .stay(redraw: false)
@@ -406,7 +433,7 @@ struct PickerSession {
     case .move(let offset) where offset == 1:
       phase = .browse
       state.moveSelection(by: offset)
-    case .move, .positionViewport, .cycleFocus, .chooseConfirmation, .help, .inputIdle:
+    case .move, .positionViewport, .cycleFocus, .confirmExit, .cancelExit, .help, .inputIdle:
       return .stay(redraw: false)
     case .moveHorizontal(let offset):
       guard updatedEdit.moveCursor(by: offset, in: state.query) else {
@@ -471,10 +498,9 @@ struct PickerSession {
     confirmation: PickerConfirmation
   ) -> PickerDecision {
     switch event {
-    case .enter, .text(" "):
-      guard confirmation.choice == .execute, let plan = availableConfirmationPlan() else {
-        phase = .browse
-        return .stay(redraw: true)
+    case .confirmExit:
+      guard let plan = availableConfirmationPlan() else {
+        return .stay(redraw: false)
       }
       return .select(plan)
     case .text("y"), .text("Y"):
@@ -490,25 +516,10 @@ struct PickerSession {
       updated.isDirectExecutionArmed = true
       phase = .confirming(updated)
       return .stay(redraw: false)
-    case .moveHorizontal, .cycleFocus:
-      guard isConfirmationTargetAvailable else {
-        return .stay(redraw: false)
-      }
-      var updated = confirmation
-      updated.choice = confirmation.choice == .cancel ? .execute : .cancel
-      phase = .confirming(updated)
-      return .stay(redraw: true)
-    case .chooseConfirmation(.cancel):
-      phase = .browse
-      return .stay(redraw: true)
-    case .chooseConfirmation(.execute):
-      guard let plan = availableConfirmationPlan() else {
-        return .stay(redraw: false)
-      }
-      return .select(plan)
     case .move, .positionViewport:
       return .stay(redraw: false)
-    case .escape, .backspace, .text("n"), .text("N"), .text("q"):
+    case .enter, .escape, .backspace, .cancelExit, .text(" "), .text("n"), .text("N"),
+      .text("q"):
       phase = .browse
       return .stay(redraw: true)
     default:
@@ -592,6 +603,114 @@ struct PickerSession {
     state.moveSelection(by: targetSelectedIndex - state.selectedIndex)
   }
 
+  private mutating func moveSelection(by offset: Int) {
+    state.moveSelection(by: offset)
+    updateRangeSelection()
+  }
+
+  private mutating func toggleRangeSelection() {
+    if isRangeSelecting {
+      finishRangeSelection(commit: true)
+      return
+    }
+    guard let application = state.selectedApplication else {
+      statusMessage = state.query.isEmpty ? "没有可范围标记的应用" : "当前筛选没有匹配"
+      return
+    }
+    rangeSelection = PickerRangeSelection(
+      anchorIdentity: application.id,
+      baselineMarkedIdentities: markedApplicationIdentities
+    )
+    updateRangeSelection()
+  }
+
+  private mutating func updateRangeSelection() {
+    guard let rangeSelection, let currentIdentity = state.selectedApplication?.id else {
+      return
+    }
+    let visibleIdentities = state.visibleApplications.map(\.id)
+    guard let anchorIndex = visibleIdentities.firstIndex(of: rangeSelection.anchorIdentity),
+      let currentIndex = visibleIdentities.firstIndex(of: currentIdentity)
+    else {
+      finishRangeSelection(commit: true, announce: false)
+      return
+    }
+
+    let lowerBound = min(anchorIndex, currentIndex)
+    let upperBound = max(anchorIndex, currentIndex)
+    let rangeIdentities = visibleIdentities[lowerBound...upperBound]
+    var updated = rangeSelection.baselineMarkedIdentities
+    for identity in rangeIdentities where !updated.contains(identity) {
+      updated.append(identity)
+    }
+    markedApplicationIdentities = updated
+    statusMessage =
+      "范围选择 \(rangeIdentities.count) 项 · v/Space 完成 · Esc 撤销"
+  }
+
+  private mutating func finishRangeSelection(
+    commit: Bool,
+    announce: Bool = true
+  ) {
+    guard let rangeSelection else {
+      return
+    }
+    if !commit {
+      markedApplicationIdentities = rangeSelection.baselineMarkedIdentities
+    }
+    self.rangeSelection = nil
+    applyLatestApplicationsAfterRangeSelection()
+    if announce {
+      statusMessage = commit ? "范围标记已保留" : "已撤销范围标记"
+    }
+  }
+
+  @discardableResult
+  private mutating func cancelRangeSelection() -> Bool {
+    guard isRangeSelecting else {
+      return false
+    }
+    finishRangeSelection(commit: false)
+    return true
+  }
+
+  private mutating func applyLatestApplicationsAfterRangeSelection() {
+    guard !isPaused else {
+      return
+    }
+    if latestApplications != state.applications {
+      state.replaceApplications(latestApplications)
+    }
+    discardUnavailableMarks(in: latestApplications)
+  }
+
+  private mutating func markAllVisibleApplications() {
+    finishRangeSelection(commit: true, announce: false)
+    let visibleIdentities = state.visibleApplications.map(\.id)
+    for identity in visibleIdentities where !markedApplicationIdentities.contains(identity) {
+      markedApplicationIdentities.append(identity)
+    }
+    statusMessage = "已标记全部 \(visibleIdentities.count) 个可见应用"
+  }
+
+  private mutating func invertVisibleApplicationMarks() {
+    finishRangeSelection(commit: true, announce: false)
+    let visibleIdentities = state.visibleApplications.map(\.id)
+    let visibleIdentitySet = Set(visibleIdentities)
+    let previouslyMarked = Set(markedApplicationIdentities)
+    let retained = markedApplicationIdentities.filter { !visibleIdentitySet.contains($0) }
+    let inverted = visibleIdentities.filter { !previouslyMarked.contains($0) }
+    markedApplicationIdentities = retained + inverted
+    statusMessage = "已反选 \(visibleIdentities.count) 个可见应用"
+  }
+
+  private mutating func clearApplicationMarks() {
+    finishRangeSelection(commit: true, announce: false)
+    let count = markedApplicationIdentities.count
+    markedApplicationIdentities.removeAll()
+    statusMessage = count == 0 ? "没有已标记的应用" : "已清空 \(count) 个标记"
+  }
+
   private mutating func togglePause() {
     isPaused.toggle()
     if !isPaused {
@@ -631,6 +750,12 @@ struct PickerSession {
   }
 
   private mutating func requestExit(_ action: ApplicationExitAction) -> PickerDecision {
+    let hadMarkedApplications = !markedApplicationIdentities.isEmpty
+    finishRangeSelection(commit: true, announce: false)
+    if hadMarkedApplications, markedApplicationIdentities.isEmpty {
+      statusMessage = "已标记的应用均已退出"
+      return .stay(redraw: true)
+    }
     let applications: [ApplicationCandidate]
     if markedApplicationIdentities.isEmpty {
       guard let application = state.selectedApplication else {

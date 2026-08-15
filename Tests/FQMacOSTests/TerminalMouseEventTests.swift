@@ -153,6 +153,38 @@ final class TerminalMouseEventTests: XCTestCase {
     XCTAssertEqual(session.state.selectedIndex, 5)
     XCTAssertEqual(session.visibleApplicationRange(listRows: 6), 0..<6)
   }
+
+  func testClickingTheCurrentRowTogglesItsMarkInsteadOfOpeningAnAction() {
+    let applications = (1...3).map { index in
+      mouseCandidate(pid: Int32(index), name: "App \(index)")
+    }
+    var session = PickerSession(
+      applications: applications,
+      initialQuery: "",
+      defaultAction: .forceQuit
+    )
+    var interaction = TerminalMouseInteraction()
+    let dimensions = TerminalDimensions(rows: 10, columns: 90)
+
+    let markCurrent = interaction.event(
+      for: TerminalMouseEvent(action: .leftPress, column: 10, row: 4),
+      session: session,
+      dimensions: dimensions
+    )
+    XCTAssertEqual(markCurrent, .text(" "))
+    if let markCurrent {
+      _ = session.handle(markCurrent)
+    }
+    XCTAssertEqual(session.markedApplicationIdentities, [applications[0].id])
+    XCTAssertEqual(session.phase, .browse)
+
+    let moveToSecond = interaction.event(
+      for: TerminalMouseEvent(action: .leftPress, column: 10, row: 5),
+      session: session,
+      dimensions: dimensions
+    )
+    XCTAssertEqual(moveToSecond, .move(1))
+  }
 }
 
 private func mouseCandidate(pid: Int32, name: String) -> ApplicationCandidate {

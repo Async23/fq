@@ -10,17 +10,9 @@ enum PickerMouseTarget: Equatable {
   case application(Int)
   case command(PickerEvent)
   case scrollbarThumb
-  case confirmationExecute
-  case confirmationCancel
 }
 
 enum TerminalPickerRenderer {
-  private struct CompactConfirmationLayout {
-    let lines: [String]
-    let buttons: String
-    let buttonRow: Int?
-  }
-
   private struct CompactHelpLayout {
     let lines: [String]
     let returnLabel: String
@@ -219,6 +211,14 @@ enum TerminalPickerRenderer {
         line: line,
         mappings: [
           ("Space 标记", .text(" ")),
+          ("v 范围", .text("v")),
+          ("a 全选", .text("a")),
+          ("i 反选", .text("i")),
+          ("x 清空", .text("x")),
+          ("a/", .text("a")),
+          ("/i/", .text("i")),
+          ("/x", .text("x")),
+          ("esc 撤销", .escape),
           ("↵ 操作", .enter),
           ("t 退出", .text("t")),
           ("K 强退", .text("K")),
@@ -228,6 +228,7 @@ enum TerminalPickerRenderer {
           ("? 帮助", .help),
           ("q 关闭", .text("q")),
           ("Space", .text(" ")),
+          ("v", .text("v")),
           ("↵", .enter),
           ("t", .text("t")),
           ("K", .text("K")),
@@ -303,7 +304,10 @@ enum TerminalPickerRenderer {
     row: Int
   ) -> PickerMouseTarget? {
     if row == 3, height >= 3 {
-      let line = TerminalText.padded(compactValues(session: session)[2], to: width)
+      let line = TerminalText.padded(
+        compactValues(session: session, height: height, width: width)[2],
+        to: width
+      )
       return commandMouseTarget(
         column: column,
         line: line,
@@ -419,82 +423,31 @@ enum TerminalPickerRenderer {
     column: Int,
     row: Int
   ) -> PickerMouseTarget? {
-    guard usesFullConfirmation(height: height, width: width) else {
-      return compactConfirmationMouseTarget(
-        session: session,
-        height: height,
-        width: width,
-        column: column,
-        row: row
-      )
+    let line: String
+    if height < 6 || width < 20 {
+      let values = compactValues(session: session, height: height, width: width)
+      guard values.indices.contains(row - 1) else {
+        return nil
+      }
+      line = TerminalText.padded(values[row - 1], to: width)
+    } else {
+      guard row == height else {
+        return nil
+      }
+      line = bottomBorder(session: session, width: width)
     }
-
-    let contentCount = 6
-    let interiorRows = height - 2
-    guard interiorRows >= contentCount else {
-      return nil
+    var mappings: [(String, PickerEvent)] = [
+      ("n/Esc 返回", .cancelExit),
+      ("n 返回", .cancelExit),
+      ("/n", .cancelExit),
+      ("n", .cancelExit),
+      ("返回", .cancelExit),
+    ]
+    if session.isConfirmationTargetAvailable {
+      mappings.insert(("y 执行", .confirmExit), at: 0)
+      mappings.insert(("y/", .confirmExit), at: 1)
     }
-
-    let topPadding = max(0, (interiorRows - contentCount) / 2)
-    let buttonRow = 2 + topPadding + contentCount - 1
-    guard row == buttonRow else {
-      return nil
-    }
-
-    let buttons = confirmationButtons(session: session)
-    let innerWidth = width - 2
-    let buttonsWidth = TerminalText.displayWidth(buttons)
-    guard buttonsWidth <= innerWidth else {
-      return nil
-    }
-    let startColumn = 2 + (innerWidth - buttonsWidth) / 2
-
-    if session.isConfirmationTargetAvailable,
-      contains(
-        column: column,
-        label: "[ 执行 ]",
-        in: buttons,
-        startingAt: startColumn
-      )
-    {
-      return .confirmationExecute
-    }
-
-    let cancelLabel = session.isConfirmationTargetAvailable ? "[ 取消 ]" : "[ 返回 ]"
-    if contains(
-      column: column,
-      label: cancelLabel,
-      in: buttons,
-      startingAt: startColumn
-    ) {
-      return .confirmationCancel
-    }
-    return nil
-  }
-
-  private static func compactConfirmationMouseTarget(
-    session: PickerSession,
-    height: Int,
-    width: Int,
-    column: Int,
-    row: Int
-  ) -> PickerMouseTarget? {
-    let layout = compactConfirmationLayout(session: session, height: height, width: width)
-    guard let buttonRow = layout.buttonRow, row == buttonRow else {
-      return nil
-    }
-    let line = TerminalText.centered(layout.buttons, in: width)
-
-    if session.isConfirmationTargetAvailable,
-      contains(column: column, label: "执行", in: line, startingAt: 1)
-    {
-      return .confirmationExecute
-    }
-    let cancelLabel = session.isConfirmationTargetAvailable ? "取消" : "返回"
-    if contains(column: column, label: cancelLabel, in: line, startingAt: 1) {
-      return .confirmationCancel
-    }
-    return nil
+    return commandMouseTarget(column: column, line: line, mappings: mappings)
   }
 
   private static func contains(
@@ -578,7 +531,7 @@ enum TerminalPickerRenderer {
       framed(
         filterStatus(session: session, width: width - 2),
         width: width,
-        contentStyle: session.isPaused ? .warning : .normal,
+        contentStyle: statusContentStyle(session: session),
         colorEnabled: colorEnabled
       ),
       framed(
@@ -613,7 +566,8 @@ enum TerminalPickerRenderer {
             tableLine(
               application: visible[index],
               selected: index == selectedIndex,
-              marked: session.isMarked(visible[index]),
+              marked: session.isMarked(visible[index])
+                || session.isConfirmationTarget(visible[index]),
               innerWidth: width - 2 - TerminalText.displayWidth(scrollbarCell)
             ) + scrollbarCell,
             width: width,
@@ -646,7 +600,7 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
-    let values = compactValues(session: session)
+    let values = compactValues(session: session, height: height, width: width)
 
     return (0..<height).map { index in
       let value = values.indices.contains(index) ? values[index] : ""
@@ -658,7 +612,26 @@ enum TerminalPickerRenderer {
     }
   }
 
-  private static func compactValues(session: PickerSession) -> [String] {
+  private static func compactValues(session: PickerSession, height: Int, width: Int) -> [String] {
+    if case .confirming = session.phase {
+      let action = session.confirmationPlan?.action == .quit ? "正常退出" : "强制退出"
+      let total = session.confirmationPlan?.applications.count ?? 0
+      let commandCandidates =
+        session.isConfirmationTargetAvailable
+        ? ["y 执行 · n 返回", "y/n", "n"]
+        : ["n/Esc 返回", "n 返回", "n"]
+      let command =
+        commandCandidates.first(where: { TerminalText.displayWidth($0) <= width })
+        ?? "n"
+      let title = "确认 · \(action) · \(total) 个"
+      if height <= 1 {
+        return [command]
+      }
+      if height == 2 {
+        return [title, command]
+      }
+      return [title, confirmationWarning(session: session), command]
+    }
     let visible = session.state.visibleApplications
     let application = session.state.selectedApplication
     let action = session.defaultAction == .forceQuit ? "强退" : "退出"
@@ -667,7 +640,7 @@ enum TerminalPickerRenderer {
     return [
       "fq · \(action) · \(sort) · \(refresh)",
       application.map {
-        let marker = session.isMarked($0) ? ">✓" : "> "
+        let marker = session.isMarked($0) || session.isConfirmationTarget($0) ? ">✓" : "> "
         return "\(marker) \(TerminalText.sanitize($0.name)) · \($0.processIdentifier)"
       }
         ?? "没有匹配",
@@ -681,174 +654,12 @@ enum TerminalPickerRenderer {
     width: Int,
     colorEnabled: Bool
   ) -> [String] {
-    guard usesFullConfirmation(height: height, width: width) else {
-      let layout = compactConfirmationLayout(session: session, height: height, width: width)
-      return compactOverlayLines(
-        layout.lines,
-        height: height,
-        width: width,
-        colorEnabled: colorEnabled,
-        accentedRow: layout.buttonRow.map { $0 - 1 }
-      )
-    }
-
-    let plan = session.confirmationPlan
-    let applications = plan?.applications ?? []
-    let application = applications.first
-    let isBatch = applications.count > 1
-    let baseActionName = plan?.action == .quit ? "正常退出" : "强制退出"
-    let actionName = isBatch ? "批量\(baseActionName)" : baseActionName
-    let isAvailable = session.isConfirmationTargetAvailable
-    let isForceQuit = plan?.action == .forceQuit
-    let subject =
-      isBatch
-      ? "\(applications.count) 个应用"
-      : TerminalText.sanitize(application?.name ?? "未知应用")
-    let identity: String
-    if isBatch {
-      identity = applications.map { TerminalText.sanitize($0.name) }.joined(separator: "、")
-    } else {
-      identity =
-        application.map { "PID \($0.processIdentifier) · \($0.bundleIdentifier ?? "无 Bundle ID")" }
-        ?? "应用已不可用"
-    }
-    let warning: String
-    if !isAvailable {
-      warning =
-        isBatch
-        ? "所有目标应用都已退出或不再可用；fq 不会发送请求。"
-        : "目标应用已经退出或不再可用；fq 不会发送退出请求。"
-    } else if session.unavailableConfirmationTargetCount > 0 {
-      warning =
-        "其中 \(session.unavailableConfirmationTargetCount) 个目标已退出；只会处理剩余 \(session.confirmationAvailableApplications.count) 个。"
-    } else if isForceQuit, isBatch, applications.contains(where: \.isFinder) {
-      warning = "这些应用中未保存的内容可能会丢失；Finder 将由 macOS 自动重新打开。"
-    } else if isForceQuit, isBatch {
-      warning = "这些应用中未保存的内容可能会丢失。"
-    } else if isForceQuit, application?.isFinder == true {
-      warning = "Finder 会被强制退出，并由 macOS 自动重新打开。"
-    } else if isForceQuit {
-      warning = "此应用中未保存的内容可能会丢失。"
-    } else if isBatch {
-      warning = "fq 会逐个请求应用正常退出；应用可以拒绝或显示保存提示。"
-    } else {
-      warning = "fq 会请求应用正常退出；应用可以拒绝或显示保存提示。"
-    }
-    let buttons = confirmationButtons(session: session)
-    let warningStyle: ContentStyle = !isAvailable || isForceQuit ? .warning : .normal
-    let content = [
-      (actionName, isForceQuit ? ContentStyle.warning : ContentStyle.accent),
-      (subject, ContentStyle.accent),
-      (identity, ContentStyle.normal),
-      ("", ContentStyle.normal),
-      (warning, warningStyle),
-      (buttons, ContentStyle.accent),
-    ]
-
-    return overlayFrame(
-      title: "操作确认",
-      content: content,
-      footer: confirmationFooter(session: session, width: width),
+    pickerLines(
+      session: session,
       height: height,
       width: width,
       colorEnabled: colorEnabled
     )
-  }
-
-  private static func usesFullConfirmation(height: Int, width: Int) -> Bool {
-    height >= 8 && width >= 26
-  }
-
-  private static func confirmationFooter(session: PickerSession, width: Int) -> String {
-    let candidates =
-      session.isConfirmationTargetAvailable
-      ? [
-        "←→/Tab 选择 │ Enter/Space 执行所选 │ Y 执行 │ N/Esc 返回",
-        "←→/Tab │ Enter/Space 确认 │ Y 执行 │ N/Esc 返回",
-        "Y 执行 │ N/Esc 返回",
-        "Esc 返回",
-      ]
-      : [
-        "目标已退出 │ Enter/Space/N/Esc 返回 │ Ctrl-C 取消",
-        "Enter/Space/N/Esc 返回",
-        "N/Esc 返回",
-        "Esc 返回",
-      ]
-    let availableWidth = max(0, width - 6)
-    return candidates.first(where: { TerminalText.displayWidth($0) <= availableWidth })
-      ?? "返回"
-  }
-
-  private static func compactConfirmationLayout(
-    session: PickerSession,
-    height: Int,
-    width: Int
-  ) -> CompactConfirmationLayout {
-    let plan = session.confirmationPlan
-    let applications = plan?.applications ?? []
-    let isBatch = applications.count > 1
-    let baseActionName = plan?.action == .quit ? "正常退出" : "强制退出"
-    let actionName = isBatch ? "批量\(baseActionName)" : baseActionName
-    let subject =
-      isBatch
-      ? "\(applications.count) 个应用"
-      : TerminalText.sanitize(applications.first?.name ?? "未知应用")
-    let title = "\(actionName) · \(subject)"
-    let buttons = compactConfirmationButtons(session: session, width: width)
-    let warning: String
-    if !session.isConfirmationTargetAvailable {
-      warning = "目标已退出 · 不会发送请求"
-    } else if session.unavailableConfirmationTargetCount > 0 {
-      warning =
-        "跳过 \(session.unavailableConfirmationTargetCount) 个 · 处理 \(session.confirmationAvailableApplications.count) 个"
-    } else if plan?.action == .forceQuit, applications.contains(where: \.isFinder) {
-      warning = "Finder 将由 macOS 自动重新打开"
-    } else if plan?.action == .forceQuit {
-      warning = "未保存的内容可能会丢失"
-    } else {
-      warning = "应用可以拒绝或显示保存提示"
-    }
-
-    if height <= 1 {
-      return CompactConfirmationLayout(
-        lines: [buttons],
-        buttons: buttons,
-        buttonRow: 1
-      )
-    }
-    return CompactConfirmationLayout(
-      lines: [title, buttons, warning],
-      buttons: buttons,
-      buttonRow: 2
-    )
-  }
-
-  private static func compactConfirmationButtons(
-    session: PickerSession,
-    width: Int
-  ) -> String {
-    let fullButtons = confirmationButtons(session: session)
-    if TerminalText.displayWidth(fullButtons) <= width {
-      return fullButtons
-    }
-    guard session.isConfirmationTargetAvailable else {
-      return "▸返回◂"
-    }
-    if width >= 12 {
-      return session.confirmationChoice == .execute
-        ? "▸执行◂  取消" : "执行  ▸取消◂"
-    }
-    return session.confirmationChoice == .execute ? "▸执行◂" : "▸取消◂"
-  }
-
-  private static func confirmationButtons(session: PickerSession) -> String {
-    guard session.isConfirmationTargetAvailable else {
-      return "▸ [ 返回 ] ◂"
-    }
-    if session.confirmationChoice == .execute {
-      return "▸ [ 执行 ] ◂    [ 取消 ]"
-    }
-    return "[ 执行 ]    ▸ [ 取消 ] ◂"
   }
 
   private static func helpLines(
@@ -890,35 +701,38 @@ enum TerminalPickerRenderer {
     let full: [(String, ContentStyle)] = [
       ("导航", .accent),
       ("h/j/k/l 或方向键  排序/移动 · Home/End  跳转 · PgUp/PgDn  翻页", .normal),
-      ("鼠标滚轮浏览 · 单击选择 · 再点打开动作 · 标题/底栏控件可点", .normal),
+      ("鼠标滚轮浏览 · 单击定位 · 再点标记/取消 · 标题/底栏控件可点", .normal),
       ("长列表右侧 ↑/↓ 翻页 · 点击轨迹跳转 · 拖动滑块滚动", .normal),
       ("列表", .accent),
       ("←/→  切换智能/应用/PID/状态 · r  反向", .normal),
       ("u  暂停/继续实时应用列表", .normal),
+      ("选择", .accent),
+      ("Space  标记/取消 · v  范围（j/k 扩展，v 完成，Esc 撤销）", .normal),
+      ("a  全选可见 · i  反选可见 · x  清空全部标记", .normal),
       ("筛选", .accent),
       ("f 或 /  编辑 · ←/→/Home/End  移动光标", .normal),
       ("Backspace/Delete  删除 · Ctrl-U  清空 · Enter  应用 · Esc  还原筛选与选择", .normal),
       ("操作", .accent),
-      ("Space  标记/取消 · Enter  \(defaultAction) · t  正常退出 · K  强制退出", .normal),
+      ("Enter  \(defaultAction) · t  正常退出 · K  强制退出", .normal),
       ("有标记时对整组执行；没有标记时只操作当前行。", .normal),
-      ("动作面板默认选择取消；←/→/Tab 切换，Enter/Space 执行所选；Y 直接执行，N 返回。", .warning),
+      ("确认时保留列表上下文；y 执行，n/Esc/Enter/Space 返回。", .warning),
       ("F1、? 或 H  帮助 · q/Esc/Ctrl-C  取消 · Ctrl-Z  挂起，fg 返回", .normal),
     ]
     let condensed: [(String, ContentStyle)] = [
       ("导航  hjkl/方向键 排序与移动 · Home/End 跳转 · PgUp/PgDn 翻页", .accent),
-      ("鼠标 滚轮浏览 · 单击选择/再点动作 · 滚动条点击/拖动", .normal),
+      ("鼠标 滚轮浏览 · 单击定位/再点标记 · 滚动条点击/拖动", .normal),
       ("列表  ←/→ 切换排序 · r 反向 · u 暂停/继续", .normal),
-      ("筛选  f 或 / 编辑 · ←/→/Home/End 移动光标", .normal),
-      ("Backspace/Delete 删除 · Ctrl-U 清空 · Enter 应用 · Esc 还原", .normal),
-      ("操作  Space 标记 · Enter \(defaultAction) · t 正常退出 · K 强制退出", .normal),
-      ("默认取消 · ←→/Tab 切换 · ↵/Space 确认 · Y 执行 · N 返回", .warning),
+      ("选择  Space 切换 · v 范围 · a 全选 · i 反选 · x 清空", .normal),
+      ("筛选  f/ 编辑 · ←→ 移动 · BS/Del 删除 · ^U 清空 · ↵ 应用 · Esc 还原", .normal),
+      ("操作  Enter \(defaultAction) · t 正常退出 · K 强制退出", .normal),
+      ("确认  y 执行 · n/Esc/Enter/Space 返回", .warning),
       ("F1/?/H 帮助 · q/Esc/Ctrl-C 取消 · Ctrl-Z 挂起，fg 返回", .normal),
     ]
     let terse: [(String, ContentStyle)] = [
       ("hjkl/方向键 选择与排序", .accent),
-      ("f/ 筛选 · u 暂停 · r 反向", .normal),
-      ("Space 标记 · ↵ 操作 · t 退出 · K 强退", .normal),
-      ("默认取消 · Y 执行 · N/Esc 返回", .warning),
+      ("Space/v/a/i/x 选择 · f/ 筛选", .normal),
+      ("↵/t/K 操作 · u 暂停 · r 反向", .normal),
+      ("确认 y 执行 · n/Esc 返回", .warning),
     ]
     let capacity = max(0, height - 2)
     if width >= 88, capacity >= full.count {
@@ -1044,13 +858,72 @@ enum TerminalPickerRenderer {
     return lines
   }
 
+  private static func statusContentStyle(session: PickerSession) -> ContentStyle {
+    if let plan = session.confirmationPlan {
+      return !session.isConfirmationTargetAvailable || plan.action == .forceQuit
+        ? .warning : .accent
+    }
+    if session.isRangeSelecting {
+      return .accent
+    }
+    return session.isPaused ? .warning : .normal
+  }
+
+  private static func confirmationWarning(session: PickerSession) -> String {
+    let applications = session.confirmationPlan?.applications ?? []
+    let isBatch = applications.count > 1
+    let isForceQuit = session.confirmationPlan?.action == .forceQuit
+    if !session.isConfirmationTargetAvailable {
+      return isBatch
+        ? "所有目标均已退出；不会发送请求"
+        : "目标应用已经退出或不再可用；fq 不会发送退出请求"
+    }
+    if session.unavailableConfirmationTargetCount > 0 {
+      return
+        "跳过 \(session.unavailableConfirmationTargetCount) 个；只会处理剩余 \(session.confirmationAvailableApplications.count) 个"
+    }
+    if isForceQuit, applications.contains(where: \.isFinder) {
+      return isBatch
+        ? "未保存内容可能丢失；Finder 将由 macOS 自动重新打开"
+        : "Finder 会被强制退出，并由 macOS 自动重新打开"
+    }
+    if isForceQuit {
+      return isBatch ? "这些应用中未保存的内容可能会丢失" : "未保存的内容可能会丢失"
+    }
+    return isBatch
+      ? "逐个请求正常退出；应用可以拒绝或显示保存提示"
+      : "应用可以拒绝或显示保存提示"
+  }
+
   private static func topBorder(session: PickerSession, width: Int) -> String {
+    let leading = width >= 10 ? "─ fq " : "─"
+    if let plan = session.confirmationPlan {
+      let action = plan.action == .forceQuit ? "强制退出" : "正常退出"
+      let count = plan.applications.count
+      let candidates = [
+        " 确认\(action) ×\(count) ─",
+        " 确认 ×\(count) ─",
+        " 确认 ─",
+        "─",
+      ]
+      let trailing =
+        candidates.first(where: {
+          TerminalText.displayWidth(leading) + TerminalText.displayWidth($0) <= width - 2
+        }) ?? "─"
+      return horizontalBorder(
+        start: "┌",
+        end: "┐",
+        leading: leading,
+        trailing: trailing,
+        width: width
+      )
+    }
+
     let action = session.defaultAction == .forceQuit ? "模式 强退" : "模式 退出"
     let sort = sortLabel(session.state.sortOrder)
     let reverse = session.state.isSortReversed ? "r 反向:开" : "r 反向:关"
     let pauseAction = session.isPaused ? "u 继续" : "u 暂停"
-    let refresh = session.isPaused ? "已暂停" : "实时"
-    let leading = width >= 10 ? "─ fq " : "─"
+    let refresh = session.isRangeSelecting ? "范围选择" : (session.isPaused ? "已暂停" : "实时")
     let candidates = [
       " f 筛选 │ \(pauseAction) │ \(reverse) │ ‹ \(sort) › │ \(refresh) │ \(action) ─",
       " \(pauseAction) │ \(reverse) │ ‹ \(sort) › │ \(refresh) │ \(action) ─",
@@ -1090,21 +963,59 @@ enum TerminalPickerRenderer {
     let visible = session.state.visibleApplications
     let location = "\(visible.isEmpty ? 0 : session.state.selectedIndex + 1)/\(visible.count)"
     let actions: [String]
-    if case .filtering = session.phase {
+    if case .confirming = session.phase {
+      actions =
+        session.isConfirmationTargetAvailable
+        ? [
+          "─ y 执行 │ n/Esc 返回 ",
+          "─ y 执行 │ n 返回 ",
+          "─ y │ n ",
+          "─ ",
+        ]
+        : [
+          "─ 目标已退出 │ n/Esc 返回 ",
+          "─ n 返回 ",
+          "─ ",
+        ]
+    } else if case .filtering = session.phase {
       actions = [
         "─ 输入筛选 │ ←→ 光标 │ ↵ 应用 │ esc 还原 │ ^U 清空 ",
         "─ 输入 │ ←→ 光标 │ ↵ 应用 │ esc 返回 ",
         "─ ↵ 应用 │ esc ",
         "─ ",
       ]
+    } else if session.isRangeSelecting {
+      actions = [
+        "─ 范围选择 │ jk 扩展 │ v/Space 完成 │ esc 撤销 │ ↵/t/K 操作 ",
+        "─ jk 扩展 │ v 完成 │ esc 撤销 │ ↵/t/K ",
+        "─ v 完成 │ esc 撤销 ",
+        "─ ",
+      ]
     } else {
       actions = [
-        "─ ↑↓/jk 选择 │ Space 标记 │ ↵ 操作 │ t 退出 │ K 强退 │ f 筛选 │ ? 帮助 │ q 关闭 ",
-        "─ ↑↓/jk │ Space 标记 │ ↵ 操作 │ t 退出 │ K 强退 │ ? │ q ",
-        "─ jk │ Space │ ↵ │ t/K │ q ",
+        "─ jk 移动 │ Space 标记 │ v 范围 │ a 全选 │ i 反选 │ x 清空 │ ↵ 操作 │ t 退出 │ K 强退 │ f 筛选 │ ? 帮助 │ q 关闭 ",
+        "─ jk │ Space 标记 │ v 范围 │ a/i/x │ ↵/t/K │ ? │ q ",
+        "─ jk │ Space │ v │ a/i/x │ t/K │ q ",
         "─ jk │ Space │ q ",
         "─ ",
       ]
+    }
+
+    if case .confirming = session.phase {
+      let total = session.confirmationPlan?.applications.count ?? 0
+      let available = session.confirmationAvailableApplications.count
+      let trailing = " \(available)/\(total) 可用 ─"
+      let leading =
+        actions.first(where: {
+          TerminalText.displayWidth($0) + TerminalText.displayWidth(trailing) <= width - 2
+        }) ?? "─ "
+      return horizontalBorder(
+        start: "└",
+        end: "┘",
+        leading: leading,
+        trailing: trailing,
+        width: width
+      )
     }
 
     let marked =
@@ -1130,9 +1041,15 @@ enum TerminalPickerRenderer {
     let left: String
     let baseRight: String
 
-    if let message = session.statusMessage {
+    if case .confirming = session.phase {
+      return fit(
+        left: " ! \(confirmationWarning(session: session))",
+        right: "",
+        width: width
+      )
+    } else if let message = session.statusMessage {
       left = " 提示  \(message)"
-      baseRight = "f / 筛选"
+      baseRight = session.isRangeSelecting ? "v 完成 · esc 撤销" : "f / 筛选"
     } else if case .filtering(let edit) = session.phase {
       let baseRight = "↵ 应用 · esc 还原"
       let right = session.isPaused ? "已暂停 · \(baseRight)" : baseRight

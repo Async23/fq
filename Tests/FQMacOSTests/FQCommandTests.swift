@@ -137,6 +137,21 @@ final class FQCommandTests: XCTestCase {
     XCTAssertEqual(command.run(arguments: []), 2)
     XCTAssertTrue(console.standardError.contains("fq --list"))
   }
+
+  func testHelpDocumentsRangeBulkSelectionAndCommandConfirmation() {
+    let console = FakeConsole(isInputTerminal: false, isOutputTerminal: false)
+    let command = FQCommand(
+      applicationManager: FakeApplicationManager(applications: []),
+      picker: FakePicker(selection: nil),
+      console: console
+    )
+
+    XCTAssertEqual(command.run(arguments: ["--help"]), 0)
+    XCTAssertTrue(console.standardOutput.contains("v                       范围选择"))
+    XCTAssertTrue(console.standardOutput.contains("a / i / x               全选可见 / 反选可见"))
+    XCTAssertTrue(console.standardOutput.contains("按 y 执行，按 n、Esc、Enter 或 Space 返回"))
+    XCTAssertFalse(console.standardOutput.contains("← / → 或 Tab 切换"))
+  }
 }
 
 @MainActor
